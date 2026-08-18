@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.applyra/mcp-server",
+  "title": "Applyra",
+  "description": "App Store Optimization data for AI agents: keyword ranks, scores, competitors, charts",
+  "websiteUrl": "https://www.applyra.io",
+  "repository": {
+    "url": "https://github.com/applyra-io/mcp-server",
+    "source": "github"
+  },
+  "version": "1.4.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@applyra/mcp-server",
+      "version": "1.4.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "APPLYRA_API_KEY",
+          "description": "Applyra API key, generated at https://www.applyra.io/dashboard/api",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

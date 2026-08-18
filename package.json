@@ -1,0 +1,45 @@
+{
+  "name": "@applyra/mcp-server",
+  "version": "1.4.0",
+  "mcpName": "io.applyra/mcp-server",
+  "description": "MCP server for Applyra: connect your App Store and Google Play keyword data to AI assistants",
+  "type": "module",
+  "homepage": "https://www.applyra.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/applyra-io/mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/applyra-io/mcp-server/issues"
+  },
+  "author": "Aurélien Weiss",
+  "bin": {
+    "@applyra/mcp-server": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "applyra",
+    "aso",
+    "app-store-optimization",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
