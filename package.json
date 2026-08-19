@@ -13,6 +13,9 @@
     "url": "https://github.com/applyra-io/mcp-server/issues"
   },
   "author": "Aurélien Weiss",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "@applyra/mcp-server": "./dist/index.js"
   },
@@ -24,6 +27,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "node scripts/smoke-test.mjs",
     "prepare": "npm run build"
   },
   "keywords": [

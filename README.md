@@ -1,6 +1,7 @@
 # @applyra/mcp-server
 
 [![npm](https://img.shields.io/npm/v/@applyra/mcp-server)](https://www.npmjs.com/package/@applyra/mcp-server)
+[![CI](https://github.com/applyra-io/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/applyra-io/mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like Claude, Cursor, VS Code Copilot, and more.
@@ -9,6 +10,7 @@ MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It co
 
 ## Prerequisites
 
+- Node.js 20 or later
 - An Applyra account with the **Unlimited plan**
 - An API key, generated at [applyra.io/dashboard/api](https://www.applyra.io/dashboard/api)
 
