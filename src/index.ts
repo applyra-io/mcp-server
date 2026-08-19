@@ -94,7 +94,7 @@ server.registerTool(
   'list_applications',
   {
     description:
-      'List all tracked mobile applications. Returns each app with its store metadata: title, description, app_id (bundle ID), store (ITUNES or GPLAY), country, lang (BCP-47), icon URL, screenshots, developer name, genre, version, rating score, number of ratings, and the count of tracked keywords.',
+      'List all tracked mobile applications. Returns each app with its store metadata: title, description, app_id (bundle ID), store (ITUNES or GPLAY), country, lang (BCP-47), icon URL, screenshots, developer name, genre, version, rating score, number of ratings, and the count of tracked keywords. Usually the first call of a workflow: the numeric internal ID it returns is what track_keywords, add_competitor, get_app_score_history and the other app-scoped tools expect, whereas add_application takes the store bundle ID instead. Read-only, consumes no quota.',
     inputSchema: {
       app_id: z
         .string()
@@ -111,7 +111,7 @@ server.registerTool(
   'add_application',
   {
     description:
-      'Track a new mobile application by its store bundle ID. The app metadata is fetched from the store, an initial ASO Health (visibility) score is computed, and the app is linked to the user workspace. Counts against the plan app cap.',
+      'Track a new mobile application by its store bundle ID. The app metadata is fetched from the store, an initial visibility score is computed, and the app is linked to the user workspace. Counts against the plan app cap.',
     inputSchema: {
       app_id: z
         .string()
@@ -215,7 +215,7 @@ server.registerTool(
   'get_keyword_rank_history',
   {
     description:
-      'Get daily ranking history for a tracked keyword over a date range. Shows how your app\'s rank evolved day by day. Use keyword_id from list_keywords results.',
+      'Get the daily rank history of one tracked keyword, with one series per app that tracks it. Returns keyword, store, country, lang, the resolved from/to dates, and apps[] entries holding app_id, app_title and history[] of { date (YYYY-MM-DD), rank }, where rank is null on days the app did not rank. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass keyword_id from list_keywords, and app_id to narrow the output to one app. For the visibility of a whole app rather than one keyword, use get_app_score_history.',
     inputSchema: {
       keyword_id: z
         .string()
@@ -339,7 +339,7 @@ server.registerTool(
   'get_app_score_history',
   {
     description:
-      'Get daily visibility score history for an application over a date range. The visibility score (0-100) reflects overall ASO performance based on keyword rankings. Use app internal ID from list_applications results.',
+      'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across its tracked keywords. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
     inputSchema: {
       app_id: z
         .string()
@@ -513,7 +513,7 @@ server.registerTool(
   'list_niche_analyses',
   {
     description:
-      'List the niche analyses you have previously run, with topic, store, country, lang, cluster count, keyword count, top opportunity score and creation date.',
+      'List the niche analyses previously run, with topic, store, country, lang, cluster count, keyword count, top opportunity score and creation date. Paginated through page and per_page. Read-only and free: it consumes no niche-analysis quota, so call it before run_niche_analysis to check whether a topic was already covered. It returns summary rows only, not the clusters and keywords themselves.',
     inputSchema: {
       page: PAGE_SCHEMA,
       per_page: PER_PAGE_HISTORY_SCHEMA,
