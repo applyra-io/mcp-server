@@ -142,7 +142,7 @@ server.registerTool(
   'list_keywords',
   {
     description:
-      'List tracked keywords with ASO metrics. Returns each keyword with: keyword text, store, country, lang, difficulty_score (0-100), traffic_score (0-100), current_rank (null if not ranked), the apps immediately ahead and behind in the ranking, the top 5 apps ranking for this keyword, is_favorite flag, and the tracking start date. Paginated.',
+      'List tracked keywords with ASO metrics. Returns each keyword with: keyword text, store, country, lang, difficulty_score (0-100), traffic_score (0-100), current_rank, ahead/behind (the apps ranked immediately above and below yours), the top 5 apps ranking for this keyword (in ranking order, rank 1 to 5), is_favorite flag, and the tracking start date. current_rank comes from the latest daily ranking snapshot and is null when the app is not in the top 100 for that keyword, in which case ahead and behind are null too. A null rank always means "not ranked", never "unknown": the tool errors out rather than returning partial rank data. Paginated.',
     inputSchema: {
       app_id: z
         .string()
@@ -367,7 +367,7 @@ server.registerTool(
   'list_competitors',
   {
     description:
-      'List competitor tracking pairs. Returns each pair with your app and the competitor app (including full metadata: title, description, icon, screenshots, developer, genre, version, score, ratings), plus both apps\' visibility scores (app_score vs competitor_score, 0-100) for direct ASO comparison.',
+      'List competitor tracking pairs. Each pair holds your app (id, app_id, title, icon, store only) and the competitor app with its full store metadata (title, description, url, icon, screenshots, developer_name, genre, version, score, ratings), plus both apps\' visibility scores (app_score vs competitor_score, 0-100) for direct ASO comparison. Use list_applications to get the full metadata of your own app.',
     inputSchema: {
       app_id: z
         .string()

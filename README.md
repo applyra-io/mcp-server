@@ -4,7 +4,7 @@
 [![CI](https://github.com/applyra-io/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/applyra-io/mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like Claude, Cursor, VS Code Copilot, and more.
+MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like Claude, Cursor, Codex, VS Code Copilot, and more.
 
 20 tools covering keyword rank tracking, difficulty and traffic scoring, competitor visibility, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
 
@@ -75,6 +75,14 @@ Add to `.vscode/mcp.json`:
 
 ```bash
 claude mcp add applyra -e APPLYRA_API_KEY=your_api_key -- npx -y @applyra/mcp-server
+```
+
+### Codex
+
+Note `--env`, where Claude Code takes `-e`.
+
+```bash
+codex mcp add applyra --env APPLYRA_API_KEY=your_api_key -- npx -y @applyra/mcp-server
 ```
 
 ### Windsurf
