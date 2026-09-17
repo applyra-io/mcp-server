@@ -6,7 +6,7 @@
 
 MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like Claude, Cursor, Codex, VS Code Copilot, and more.
 
-20 tools covering keyword rank tracking, difficulty and traffic scoring, competitor visibility, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
+25 tools covering keyword rank tracking, difficulty and traffic scoring, listing audits and metadata simulation, competitor visibility, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
 
 ## Prerequisites
 
@@ -107,7 +107,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 | Tool | Description |
 |------|-------------|
-| `list_applications` | List tracked apps with store metadata, ratings, and keyword count |
+| `list_applications` | List tracked apps with store metadata, ratings, keyword count and ASO Health scores |
 | `add_application` | Track a new application by its store bundle ID. Fetches store metadata and computes the initial visibility score |
 | `list_keywords` | Tracked keywords with current rank, favorite flag, difficulty/traffic scores |
 | `track_keywords` | Track up to 20 new keywords for an application in a single call |
@@ -123,6 +123,11 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `list_top_chart_categories` | Categories and collections supported by `top_charts`, per store |
 | `get_keyword_rank_history` | Daily rank evolution over a date range |
 | `get_app_score_history` | Daily visibility score history for an app |
+| `get_aso_health` | Full listing audit for an app: coverage, targeting and appeal, every field, and what to fix |
+| `check_metadata` | Check draft listing text against each store's limits and forbidden copy. Instant, no store lookup |
+| `simulate_metadata` | Score a listing that does not exist yet and see the gain against the app's current score |
+| `list_metadata_simulations` | Listing drafts already scored on the account (titles and scores) |
+| `get_metadata_simulation` | One saved draft in full: its four fields, its context and its findings |
 | `list_competitors` | Competitor pairs with side-by-side visibility scores |
 | `add_competitor` | Add a competitor app to one of your applications by its store bundle ID |
 | `remove_competitor` | Remove a competitor relationship by its internal ID |

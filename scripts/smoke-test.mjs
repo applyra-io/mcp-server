@@ -6,7 +6,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const EXPECTED_TOOL_COUNT = 20;
+const EXPECTED_TOOL_COUNT = 25;
 
 const transport = new StdioClientTransport({
   command: process.execPath,
