@@ -1,0 +1,15 @@
+{
+  "name": "applyra",
+  "displayName": "Applyra",
+  "version": "1.5.0",
+  "description": "App Store and Google Play keyword rankings, keyword scores, competitor visibility, ASO Health and metadata simulation for your agent.",
+  "author": {
+    "name": "Aurélien Weiss",
+    "email": "aurelien@applyra.io"
+  },
+  "homepage": "https://www.applyra.io",
+  "repository": "https://github.com/applyra-io/mcp-server",
+  "license": "MIT",
+  "keywords": ["aso", "app-store-optimization", "app-store", "google-play", "keywords", "mcp"],
+  "logo": "assets/logo.png"
+}

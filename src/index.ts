@@ -383,7 +383,7 @@ server.registerTool(
   'get_app_score_history',
   {
     description:
-      'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across its tracked keywords. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
+      'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across a stable set of keywords from its niche, the same set over time, so two dates are directly comparable. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
     inputSchema: {
       app_id: z
         .string()

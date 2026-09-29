@@ -36,7 +36,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ### Cursor
 
-Add to `.cursor/mcp.json` or `~/.cursor/mcp.json`:
+Install the Applyra plugin from the Cursor Marketplace and set the `APPLYRA_API_KEY` environment variable. The plugin also ships an ASO research skill that guides the agent through the tools.
+
+Or add the server manually to `.cursor/mcp.json` or `~/.cursor/mcp.json`:
 
 ```json
 {

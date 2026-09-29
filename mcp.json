@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "applyra": {
+      "command": "npx",
+      "args": ["-y", "@applyra/mcp-server"],
+      "env": {
+        "APPLYRA_API_KEY": "${APPLYRA_API_KEY}"
+      }
+    }
+  }
+}
