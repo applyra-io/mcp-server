@@ -4,11 +4,20 @@
 [![CI](https://github.com/applyra-io/mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/applyra-io/mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like Claude, Cursor, Codex, VS Code Copilot, and more.
+MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like ChatGPT, Claude, Cursor, Codex, VS Code Copilot, and more.
 
 25 tools covering keyword rank tracking, difficulty and traffic scoring, listing audits and metadata simulation, competitor visibility, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
 
-## Prerequisites
+## Remote server (ChatGPT, Claude)
+
+The same tools are hosted at `https://www.applyra.io/api/mcp` (Streamable HTTP, OAuth). Nothing to install and no API key: the client opens an Applyra sign-in page, you approve it, and it is connected. It requires an Applyra account with the **Unlimited plan**.
+
+- **ChatGPT**: on chatgpt.com, Plugins > Add > Create custom MCP server, with this URL and OAuth authentication, then Create as a plugin. Read and write tools both work on a ChatGPT Plus plan.
+- **Claude**: Customize > Connectors > Add custom connector, with this URL.
+
+Connected assistants are listed, and can be disconnected, at [applyra.io/dashboard/mcp](https://www.applyra.io/dashboard/mcp).
+
+## Prerequisites (local server)
 
 - Node.js 20 or later
 - An Applyra account with the **Unlimited plan**

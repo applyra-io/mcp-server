@@ -1,0 +1,837 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+
+export type ApplyraServerOptions = {
+  /** Origin of the Applyra REST API, e.g. https://www.applyra.io */
+  baseUrl: string;
+  /** The caller's credential, sent on every API request: an `X-API-Key` or an `Authorization` header. */
+  headers: Record<string, string>;
+  version: string;
+};
+
+type CallApiOptions = {
+  params?: Record<string, string>;
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  body?: Record<string, unknown>;
+};
+
+/**
+ * Everything the API said about a failure, not just its headline.
+ *
+ * `error` alone is a category ("Validation failed"), and the sentence that says
+ * WHICH field and WHY lives in `details`. Dropping it left every validation
+ * failure on every tool reading as an unexplained refusal, so the caller had to
+ * guess what to change: exactly the loop an agent cannot get out of.
+ *
+ * `details.issues` is the flattened Zod error (`fieldErrors` keyed by field,
+ * `formErrors` for whole-body rules such as "provide at least one field").
+ * `details.notes` is our own prose. Both are folded into one line.
+ */
+function describeError(body: unknown, fallback: string): string {
+  const payload = body as {
+    error?: string;
+    details?: {
+      notes?: string[];
+      issues?: { formErrors?: string[]; fieldErrors?: Record<string, string[] | undefined> };
+    };
+  };
+  const parts: string[] = [payload?.error || fallback];
+  const issues = payload?.details?.issues;
+  if (issues?.formErrors?.length) parts.push(issues.formErrors.join('; '));
+  for (const [field, messages] of Object.entries(issues?.fieldErrors ?? {})) {
+    if (messages?.length) parts.push(`${field}: ${messages.join('; ')}`);
+  }
+  if (payload?.details?.notes?.length) parts.push(payload.details.notes.join(' '));
+  return parts.join(' | ');
+}
+
+function buildParams(
+  entries: Record<string, string | undefined>
+): Record<string, string> | undefined {
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(entries)) {
+    if (value) params[key] = value;
+  }
+  return Object.keys(params).length > 0 ? params : undefined;
+}
+
+// Compact on purpose: the text goes into the model's context, where indentation
+// costs about half again as many tokens on a long list and helps no one.
+function jsonResponse(result: unknown) {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+  };
+}
+
+// Reusable input schemas — keep parameter naming and descriptions consistent across tools.
+const STORE_SCHEMA = z
+  .enum(['GPLAY', 'ITUNES'])
+  .describe('App store: GPLAY (Google Play) or ITUNES (App Store)');
+const COUNTRY_SCHEMA = z.string().describe('ISO country code (e.g., US, FR, DE)');
+const LANG_SCHEMA = z
+  .string()
+  .describe('BCP-47 language-region code (e.g., en-US, fr-FR, de-DE)');
+const PAGE_SCHEMA = z.string().optional().describe('Page number (starts at 1)');
+const PER_PAGE_HISTORY_SCHEMA = z
+  .string()
+  .optional()
+  .describe('Results per page (max 200, default 50)');
+
+/**
+ * Annotations of the read-only tools. ChatGPT's plugin directory rejects a tool
+ * that leaves any of the three hints implicit. Reading the user's own account, a
+ * fixed catalog or the text passed in is a bounded domain, hence not open world;
+ * top charts list any public app of the stores.
+ */
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false } as const;
+const READ_ONLY_PUBLIC_DATA = { readOnlyHint: true, destructiveHint: false, openWorldHint: true } as const;
+
+/**
+ * The Applyra MCP server. Every tool is a thin call to the REST API, so the
+ * transport around it only decides which credential those calls carry: the npm
+ * package runs it over stdio with the user's API key, and the remote endpoint at
+ * https://www.applyra.io/api/mcp runs it over Streamable HTTP with the OAuth access
+ * token of the signed-in user.
+ */
+export function createApplyraServer({ baseUrl, headers, version }: ApplyraServerOptions): McpServer {
+  async function callApi(path: string, options: CallApiOptions = {}): Promise<unknown> {
+    const { params, method = 'GET', body } = options;
+    const url = new URL(`/api/v1${path}`, baseUrl);
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== '') {
+          url.searchParams.set(key, value);
+        }
+      }
+    }
+
+    const requestHeaders: Record<string, string> = { ...headers };
+    if (body !== undefined) requestHeaders['Content-Type'] = 'application/json';
+
+    const response = await fetch(url.toString(), {
+      method,
+      headers: requestHeaders,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    /**
+     * Parsed defensively, because not every failure comes back as our JSON. A
+     * gateway timeout or a platform error answers with HTML, and `response.json()`
+     * then throws a SyntaxError about an unexpected "<": a parser complaint where
+     * the caller needed to read "504 Gateway Timeout" and try again.
+     */
+    const raw = await response.text();
+    let responseBody: unknown;
+    try {
+      responseBody = JSON.parse(raw);
+    } catch {
+      throw new Error(
+        `Applyra API error (${response.status}): ${response.statusText || 'unreadable response'}. `
+        + `The server did not answer with JSON: ${raw.slice(0, 200)}`,
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(`Applyra API error (${response.status}): ${describeError(responseBody, response.statusText)}`);
+    }
+
+    return responseBody;
+  }
+
+  const server = new McpServer({
+    name: 'applyra',
+    version,
+  });
+
+  server.registerTool(
+    'list_applications',
+    {
+      title: 'List applications',
+      description:
+        'List all tracked mobile applications. Returns each app with its store metadata: title, description, app_id (bundle ID), store (ITUNES or GPLAY), country, lang (BCP-47), icon URL, screenshots, developer name, genre, version, rating score, number of ratings, the count of tracked keywords, and aso_health (the listing audit: global score plus its coverage, targeting and appeal axes, or null on an app the audit has not reached yet; get_aso_health returns the breakdown behind it). Usually the first call of a workflow: the numeric internal ID it returns is what track_keywords, add_competitor, get_app_score_history and the other app-scoped tools expect, whereas add_application takes the store bundle ID instead. Read-only.',
+      inputSchema: {
+        app_id: z
+          .string()
+          .optional()
+          .describe('Filter by application internal ID (numeric, e.g. "344")'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id }) =>
+      jsonResponse(await callApi('/applications', { params: buildParams({ app_id }) }))
+  );
+
+  server.registerTool(
+    'add_application',
+    {
+      title: 'Add an application',
+      description:
+        'Track a new mobile application by its store bundle ID. The app metadata is fetched from the store, an initial visibility score is computed, and the app is linked to the user workspace. Counts against the plan app cap.',
+      inputSchema: {
+        app_id: z
+          .string()
+          .describe(
+            'Store bundle ID (e.g. "com.spotify.music" for GPLAY, "284882215" or a bundle ID like "com.facebook.Facebook" for ITUNES)'
+          ),
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        lang: LANG_SCHEMA,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ app_id, store, country, lang }) =>
+      jsonResponse(
+        await callApi('/applications', {
+          method: 'POST',
+          body: { app_id, store, country, lang },
+        })
+      )
+  );
+
+  server.registerTool(
+    'list_keywords',
+    {
+      title: 'List tracked keywords',
+      description:
+        'List tracked keywords with ASO metrics. Returns each keyword with: keyword text, store, country, lang, difficulty_score (0-100), traffic_score (0-100), current_rank, ahead/behind (the apps ranked immediately above and below yours), the top 5 apps ranking for this keyword (in ranking order, rank 1 to 5), is_favorite flag, and the tracking start date. current_rank comes from the latest daily ranking snapshot and is null when the app is not in the top 100 for that keyword, in which case ahead and behind are null too. A null rank always means "not ranked", never "unknown": the tool errors out rather than returning partial rank data. Paginated.',
+      inputSchema: {
+        app_id: z
+          .string()
+          .optional()
+          .describe('Filter keywords by application internal ID (numeric, e.g. "344")'),
+        favorites: z
+          .string()
+          .optional()
+          .describe('Set to "true" to return only keywords marked as favorite.'),
+        page: PAGE_SCHEMA,
+        per_page: z
+          .string()
+          .optional()
+          .describe('Results per page (max 1000, default 200)'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id, favorites, page, per_page }) =>
+      jsonResponse(
+        await callApi('/keywords', {
+          params: buildParams({ app_id, favorites, page, per_page }),
+        })
+      )
+  );
+
+  server.registerTool(
+    'inspect_keyword',
+    {
+      title: 'Inspect a keyword',
+      description:
+        'Deep-analyze any keyword (even ones you don\'t track). Returns difficulty_score (0-100), traffic_score (0-100), KEI with score and level (e.g. "good"), the top 20 apps currently ranking for it (with rank, app_id, title, icon, genre, rating), related keyword suggestions from search and keyword sources, and whether you already track this keyword. Inspecting a keyword you already track does not consume the inspection quota.',
+      inputSchema: {
+        keyword: z.string().describe('The keyword to analyze'),
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        lang: LANG_SCHEMA,
+      },
+      // Mutation: consumes the keyword inspections quota when the keyword is not
+      // already tracked, and always writes a row to the inspection history.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ keyword, store, country, lang }) =>
+      jsonResponse(
+        await callApi('/keywords/inspect', { params: { keyword, store, country, lang } })
+      )
+  );
+
+  server.registerTool(
+    'list_keyword_inspections',
+    {
+      title: 'List keyword inspections',
+      description:
+        'List the keywords you have previously inspected, with their last inspection date and current difficulty/traffic scores. Useful to revisit past keyword research without consuming the inspection quota again.',
+      inputSchema: {
+        page: PAGE_SCHEMA,
+        per_page: PER_PAGE_HISTORY_SCHEMA,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ page, per_page }) =>
+      jsonResponse(
+        await callApi('/keywords/inspect/history', { params: buildParams({ page, per_page }) })
+      )
+  );
+
+  server.registerTool(
+    'get_keyword_rank_history',
+    {
+      title: 'Get keyword rank history',
+      description:
+        'Get the daily rank history of one tracked keyword, with one series per app that tracks it. Returns keyword, store, country, lang, the resolved from/to dates, and apps[] entries holding app_id, app_title and history[] of { date (YYYY-MM-DD), rank }, where rank is null on days the app did not rank. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass keyword_id from list_keywords, and app_id to narrow the output to one app. For the visibility of a whole app rather than one keyword, use get_app_score_history.',
+      inputSchema: {
+        keyword_id: z
+          .string()
+          .describe('The keyword internal ID (numeric, from list_keywords results)'),
+        from: z
+          .string()
+          .optional()
+          .describe('Start date in YYYY-MM-DD format. Defaults to 30 days ago.'),
+        to: z
+          .string()
+          .optional()
+          .describe('End date in YYYY-MM-DD format. Defaults to today.'),
+        app_id: z.string().optional().describe('Filter by specific app ID'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ keyword_id, from, to, app_id }) =>
+      jsonResponse(
+        await callApi(`/keywords/${keyword_id}/ranks/history`, {
+          params: buildParams({ from, to, app_id }),
+        })
+      )
+  );
+
+  server.registerTool(
+    'set_keyword_favorite',
+    {
+      title: 'Mark a keyword as favorite',
+      description:
+        'Mark or unmark a tracked keyword as favorite for a specific app. Favorites are stored per tracking row (profile + app + keyword), so a keyword tracked across multiple apps has independent favorite states. Both keyword_id and app_id come from list_keywords results.',
+      inputSchema: {
+        keyword_id: z
+          .string()
+          .describe('The keyword internal ID (numeric, from list_keywords results)'),
+        app_id: z
+          .string()
+          .describe('The application internal ID (numeric, from list_keywords results)'),
+        is_favorite: z.boolean().describe('true to mark as favorite, false to unmark'),
+      },
+      // Mutation: overwrites the is_favorite flag on the tracking row. Idempotent
+      // (calling twice with the same value yields the same final state), and
+      // destructive in ChatGPT's sense, which keeps `false` for purely additive
+      // writes: unmarking removes a favorite.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ keyword_id, app_id, is_favorite }) =>
+      jsonResponse(
+        await callApi(`/keywords/${keyword_id}/apps/${app_id}/favorite`, {
+          method: 'PATCH',
+          body: { is_favorite },
+        })
+      )
+  );
+
+  server.registerTool(
+    'track_keywords',
+    {
+      title: 'Track keywords',
+      description:
+        'Track up to 20 new keywords for one of your applications in a single call. Each keyword triggers an immediate ranking fetch. Already-tracked keywords return a per-keyword error in `results`; previously removed keywords are reactivated automatically. Use app_id from list_applications results.',
+      inputSchema: {
+        keywords: z
+          .array(z.string().min(2).max(100))
+          .min(1)
+          .max(20)
+          .describe('Array of 1-20 keyword strings (each 2-100 chars)'),
+        app_id: z
+          .number()
+          .int()
+          .positive()
+          .describe('The application internal ID (numeric, from list_applications results)'),
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        lang: LANG_SCHEMA,
+      },
+      // Mutation: each keyword consumes a proxy hit, persists tracking + competitor backfill.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ keywords, app_id, store, country, lang }) =>
+      jsonResponse(
+        await callApi('/keywords', {
+          method: 'POST',
+          body: { keywords, app_id, store, country, lang },
+        })
+      )
+  );
+
+  server.registerTool(
+    'untrack_keyword',
+    {
+      title: 'Untrack a keyword',
+      description:
+        'Stop tracking a keyword for the specified app (soft delete). The historical ranking data is preserved; re-adding the same keyword reactivates the row. Idempotent: calling on an already-removed row returns success.',
+      inputSchema: {
+        keyword_id: z
+          .string()
+          .describe('The keyword internal ID (numeric, from list_keywords results)'),
+        app_id: z
+          .string()
+          .describe('The application internal ID (numeric, from list_keywords results)'),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ keyword_id, app_id }) =>
+      jsonResponse(
+        await callApi(`/keywords/${keyword_id}/apps/${app_id}`, { method: 'DELETE' })
+      )
+  );
+
+  server.registerTool(
+    'get_app_score_history',
+    {
+      title: 'Get visibility score history',
+      description:
+        'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across a stable set of keywords from its niche, the same set over time, so two dates are directly comparable. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
+      inputSchema: {
+        app_id: z
+          .string()
+          .describe('The application internal ID (numeric, e.g. "344" from list_applications results)'),
+        from: z
+          .string()
+          .optional()
+          .describe('Start date in YYYY-MM-DD format. Defaults to 30 days ago.'),
+        to: z
+          .string()
+          .optional()
+          .describe('End date in YYYY-MM-DD format. Defaults to today.'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id, from, to }) =>
+      jsonResponse(
+        await callApi(`/applications/${app_id}/scores/history`, {
+          params: buildParams({ from, to }),
+        })
+      )
+  );
+
+  server.registerTool(
+    'get_aso_health',
+    {
+      title: 'Get the ASO Health audit',
+      description:
+        'Get the full ASO Health audit of one tracked app: how well its listing is WRITTEN, as opposed to how it currently ranks. Returns app (id, app_id, title, store, country, lang) so a score is always attributable, global (0-100), the three axes, the maturity tier with its label, every field, the terms it targets, flags[], and timeline[] of past releases with their score. '
+        + 'THE AXES: coverage = how much searched vocabulary the indexed fields carry; targeting = whether the terms it aims at are winnable AT THIS APP\'S SIZE; appeal = rating, screenshots and freshness. '
+        + 'TIER drives targeting: 1 Emerging, 2 Growing, 3 Established. The verdict threshold moves with it, so the same term can be "ambitious" for a tier 2 app and "out-of-reach" for a tier 1 one, and a tier 3 app can reasonably aim higher. Say that when you explain a verdict. '
+        + 'fields[].state is "scored", "empty" (blank on the store) or "missing" (the iOS keywords field, which Apple never publishes: we only know it if the user gave it to us). fields[].key stays "subtitle" on Google Play, where the store calls that field the short description: use the store\'s name when you talk to the user. fields[].text is TRUNCATED to a preview and fields[].truncated says so; the full text is on list_applications. '
+        + 'targeting.keywords[].verdict is "reachable", "ambitious" or "out-of-reach"; traffic and difficulty are both 0-100. targeting.ungraded counts searched terms we have no competition data for; targeting.unsearched counts words nobody types, listed in unsearched_words. targeting.assessable is false when the listing holds no searched term at all, and then there is no targeting to judge. '
+        + 'report is null on an app the audit has never reached, which is not a score of zero. '
+        + 'The audit is kept up to date automatically, so this reads a stored result and answers in milliseconds: call it as often as you need. For visibility over time instead, use get_app_score_history; to score a listing that does not exist yet, use simulate_metadata.',
+      inputSchema: {
+        app_id: z
+          .string()
+          .describe(
+            'The application INTERNAL id: the "id" field of list_applications (numeric, e.g. "344"). Not its "app_id" field, which is the store bundle id.'
+          ),
+        include_words: z
+          .boolean()
+          .optional()
+          .describe(
+            'Add the per-word table of every indexed field: name, traffic (0-100), difficulty (0-100), occurrences and status. STATUS values: "earning" (real search demand, and this field is credited for it), "already-used" (an earlier field already claimed it; the stores index a word once), "not-searched" (indexed, but nobody types it here), "pending" (no search data yet on this storefront), and on the Google Play long description "covered" / "missing" (does it repeat what the title and short description target) and "extra-reach" (a searched word it carries that no other field does). occurrences is only counted on the Google Play long description, where repetition is visible; it is null elsewhere, because a word is either in the field or not. Off by default: it is detail you rarely need to answer how a listing is doing.'
+          ),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id, include_words }) =>
+      jsonResponse(
+        await callApi(`/applications/${app_id}/aso-health`, {
+          params: buildParams({ include_words: include_words ? 'true' : undefined }),
+        })
+      )
+  );
+
+  server.registerTool(
+    'check_metadata',
+    {
+      title: 'Check listing metadata',
+      description:
+        'Check draft listing text against the stores\' own rules, before spending a run measuring it. Per field: the length as the STORE counts it (UTF-16 code units, which is not what a character count gives you in most languages), the limit, what is left, and warnings[]. '
+        + 'warnings[].level is "error" (the store would refuse this as it stands), "warning" (it costs you something, or a reviewer may object) or "info" (worth knowing, often counter-intuitive: emoji are allowed in a Google Play description but banned in the app name). warnings[].rule names the policy when one fired: "price", "ranking", "play-program", "call-to-action", "kids", "rival-platform", or null for a limit or formatting warning. '
+        + 'THE TWO STORES ARE NOT SYMMETRICAL, and this is the most actionable thing the tool tells you: Google NAMES forbidden words and rejects, so the same term is an error there; Apple publishes no list and a reviewer decides, so it is a warning. A draft can be perfectly valid on one store and refused on the other. '
+        + '`valid` is false only when at least one field carries an ERROR: a draft can be valid and still carry warnings worth acting on, so read them. `notes[]` carries anything wrong with the request itself, such as sending a keywords field to Google Play, which has none. '
+        + 'On the iOS keywords field it also returns keywords{terms, duplicates, too_short, phrases, wasted_on_spaces, wasted_on_duplicates}: phrases are multi-word entries, which Apple splits apart and recombines itself, so they gain nothing over their words. '
+        + 'It is pure arithmetic over the text you pass, with no store lookup, so it answers instantly: run it on every draft you write, in a loop if that helps, and call simulate_metadata only once it comes back valid.',
+      inputSchema: {
+        store: STORE_SCHEMA,
+        title: z.string().optional().describe('App name'),
+        subtitle: z
+          .string()
+          .optional()
+          .describe('The subtitle on iOS, the short description on Google Play'),
+        description: z.string().optional().describe('The full/long description'),
+        kw_field: z
+          .string()
+          .optional()
+          .describe('iOS keywords field, comma separated. Google Play has no such field.'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ store, title, subtitle, description, kw_field }) =>
+      jsonResponse(
+        await callApi('/metadata/check', {
+          method: 'POST',
+          body: { store, title, subtitle, description, kw_field },
+        })
+      )
+  );
+
+  server.registerTool(
+    'simulate_metadata',
+    {
+      title: 'Simulate listing metadata',
+      description:
+        'Score a listing that does not exist yet, on the same engine that audits the real ones, and see the gain or loss against the app\'s current score. '
+        + 'WITH app_id: every field you leave out is read from that app\'s live listing AND its real context (rating, screenshots, age, languages), so { app_id, title } is a complete request and the delta is meaningful. This is the mode to use to answer "is my draft better than my listing". '
+        + 'WITHOUT app_id: you must pass store, country and lang, and the context defaults to a listing NOBODY HAS PUBLISHED: no rating, no screenshot, one language. That deliberately floors the appeal axis, so the global score is NOT comparable to a real app\'s score and you must not present it as one. Compare the coverage axis instead, or pass `context` yourself to describe the app you have in mind. `context` works in both modes: any key you send overrides, any key you omit keeps the app\'s value (or the blank default). '
+        + 'Returns app (null without app_id), aso_health with the three axes and the tier, delta against the app\'s stored score (null for a draft from scratch, and each axis is independently null when it was never computed), flags[], the saved run, and notes[] for anything wrong with the request that did not stop it (a kw_field sent for a Google Play listing, which has none, is ignored and reported there). '
+        + 'words_probed is how many words the run weighed; words_fetched is how many of those had to be read from the store for the first time. words_fetched: 0 means everything was already known and the call was fast; a high one is why a call took several seconds, and it warms the cache for everyone afterwards. '
+        + 'Expect a few seconds per call. Check the draft with check_metadata first, and change something meaningful between two calls rather than polling it. Re-read a past run in full with get_metadata_simulation, or list them with list_metadata_simulations.',
+      inputSchema: {
+        app_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            'The application internal ID (numeric, from list_applications). Its live listing fills every field you omit, and its score is what the delta is measured against.'
+          ),
+        store: STORE_SCHEMA.optional().describe(
+          'App store. Required only without app_id: with one, the market comes from the app.'
+        ),
+        country: COUNTRY_SCHEMA.optional().describe('ISO country code. Required only without app_id.'),
+        lang: LANG_SCHEMA.optional().describe('BCP-47 language code. Required only without app_id.'),
+        title: z.string().optional().describe('App name'),
+        subtitle: z
+          .string()
+          .optional()
+          .describe('The subtitle on iOS, the short description on Google Play'),
+        description: z.string().optional().describe('The full/long description'),
+        kw_field: z
+          .string()
+          .optional()
+          .describe('iOS keywords field, comma separated. Google Play has no such field.'),
+        // Bounds copied from the server's own schema, so a value it would refuse
+        // is named here instead of costing a round trip to find out.
+        context: z
+          .object({
+            rating: z.number().min(0).max(5).nullable().optional()
+              .describe('Average store rating, 0-5. Null means nobody has rated it.'),
+            rating_count: z.number().int().min(0).max(10_000_000_000).optional(),
+            screenshots: z.number().int().min(0).max(100).optional(),
+            days_since_update: z.number().int().min(0).max(3650).optional()
+              .describe('Days since the listing last changed. 0 is "shipped today".'),
+            age_months: z.number().int().min(0).max(600).nullable().optional()
+              .describe('Months since release. Null is unknown.'),
+            has_video: z.boolean().optional(),
+            language_count: z.number().int().min(1).max(500).optional(),
+          })
+          .optional()
+          .describe(
+            'What the listing has going for it beyond its text, merged over the app\'s real values. Send one key alone to ask a what-if, e.g. { days_since_update: 0 } for "what if I shipped today".'
+          ),
+      },
+      // Mutation: reads the store for any word it has never measured on that
+      // storefront, and saves the run to the user's own history.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) =>
+      jsonResponse(await callApi('/metadata/simulate', { method: 'POST', body: input }))
+  );
+
+  server.registerTool(
+    'list_metadata_simulations',
+    {
+      title: 'List metadata simulations',
+      description:
+        'List the listing drafts already scored on this account, newest first, whether they were run from here or from the Metadata Simulator in the dashboard. Each row holds the draft TITLE ONLY, its market, the score it reached with the three axes, the app score it was measured against, whether it differed from the live listing, and how many times it has been re-run. It does NOT carry the subtitle, keywords field or description: pass a row\'s "id" to get_metadata_simulation to read a draft in full. Use this to find a past score without re-running it.',
+      inputSchema: {
+        page: PAGE_SCHEMA,
+        per_page: PER_PAGE_HISTORY_SCHEMA,
+        search: z.string().optional().describe('Match on the draft title'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ page, per_page, search }) =>
+      jsonResponse(
+        await callApi('/metadata/simulate/history', {
+          params: buildParams({ page, per_page, search }),
+        })
+      )
+  );
+
+  server.registerTool(
+    'get_metadata_simulation',
+    {
+      title: 'Get a metadata simulation',
+      description:
+        'Read one saved listing draft in full: the four fields it was scored on, the context it assumed, the score it reached, and the findings behind it. This is what list_metadata_simulations cannot carry, and it is what makes a past run worth picking up: the text is here. Pass the "id" of a row from list_metadata_simulations, or the "saved.id" a simulate_metadata call returned. Read-only and instant.',
+      inputSchema: {
+        id: z
+          .string()
+          .describe('The saved run id (numeric), from list_metadata_simulations or from simulate_metadata\'s saved.id'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ id }) => jsonResponse(await callApi(`/metadata/simulate/history/${id}`))
+  );
+
+  server.registerTool(
+    'list_competitors',
+    {
+      title: 'List competitors',
+      description:
+        'List competitor tracking pairs. Each pair holds your app (id, app_id, title, icon, store only) and the competitor app with its full store metadata (title, description, url, icon, screenshots, developer_name, genre, version, score, ratings), plus both apps\' visibility scores (app_score vs competitor_score, 0-100) for direct ASO comparison. Use list_applications to get the full metadata of your own app.',
+      inputSchema: {
+        app_id: z
+          .string()
+          .optional()
+          .describe('Filter competitors by application internal ID (numeric, e.g. "344")'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id }) =>
+      jsonResponse(await callApi('/competitors', { params: buildParams({ app_id }) }))
+  );
+
+  server.registerTool(
+    'add_competitor',
+    {
+      title: 'Add a competitor',
+      description:
+        'Add a competitor app to one of your applications, identified by the competitor\'s store bundle ID. The competitor metadata is fetched from the store and ranking entries are backfilled for every keyword tracked on the main app.',
+      inputSchema: {
+        app_id: z
+          .number()
+          .int()
+          .positive()
+          .describe('The main application internal ID (from list_applications results)'),
+        competitor_app_id: z
+          .string()
+          .describe(
+            'Store bundle ID of the competitor (e.g. "com.spotify.music" for GPLAY, "284882215" or a bundle ID for ITUNES)'
+          ),
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        lang: LANG_SCHEMA,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ app_id, competitor_app_id, store, country, lang }) =>
+      jsonResponse(
+        await callApi('/competitors', {
+          method: 'POST',
+          body: { app_id, competitor_app_id, store, country, lang },
+        })
+      )
+  );
+
+  server.registerTool(
+    'remove_competitor',
+    {
+      title: 'Remove a competitor',
+      description:
+        'Remove a competitor relationship by its internal relation ID (the `id` field returned by list_competitors or add_competitor — note that this is the relation row id, not the competitor app id).',
+      inputSchema: {
+        relation_id: z
+          .string()
+          .describe('Competitor relation internal ID (the `id` field at the top level of list_competitors / add_competitor responses)'),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ relation_id }) =>
+      jsonResponse(await callApi(`/competitors/${relation_id}`, { method: 'DELETE' }))
+  );
+
+  server.registerTool(
+    'run_autocomplete',
+    {
+      title: 'Get store autocomplete suggestions',
+      description:
+        'Fetch autocomplete suggestions from the App Store or Google Play for a given prefix (1-60 characters). Useful to discover what users are searching for that starts with a given seed. Consumes one autocomplete query and one API request.',
+      inputSchema: {
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        lang: LANG_SCHEMA,
+        prefix: z
+          .string()
+          .describe('Search prefix to autocomplete (1-60 chars, e.g. "fitness")'),
+      },
+      // Mutation: consumes one autocomplete query and one API request, and
+      // upserts a row in the autocomplete history.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ store, country, lang, prefix }) =>
+      jsonResponse(
+        await callApi('/autocomplete', { params: { store, country, lang, prefix } })
+      )
+  );
+
+  server.registerTool(
+    'list_autocomplete_history',
+    {
+      title: 'List autocomplete history',
+      description:
+        'List the autocomplete queries you have previously run, with the prefix, store, country, lang, suggestion count and last query date.',
+      inputSchema: {
+        page: PAGE_SCHEMA,
+        per_page: PER_PAGE_HISTORY_SCHEMA,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ page, per_page }) =>
+      jsonResponse(
+        await callApi('/autocomplete/history', { params: buildParams({ page, per_page }) })
+      )
+  );
+
+  server.registerTool(
+    'run_niche_analysis',
+    {
+      title: 'Run a niche analysis',
+      description:
+        'Run a niche analysis on a topic: discovers relevant keywords, clusters them into sub-niches, and scores each cluster\'s opportunity. Returns clusters with their keywords, opportunity scores, intent type, and an app concept suggestion. Cache hits (recent identical analyses, less than 7 days old) are returned instantly without consuming the niche analysis quota. Fresh analyses can take a few minutes.',
+      inputSchema: {
+        topic: z
+          .string()
+          .describe('Niche topic to analyze (2-100 characters, e.g. "meditation")'),
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        lang: LANG_SCHEMA,
+      },
+      // Mutation: fresh analyses consume the niche analysis quota and write the
+      // result to the shared cache + user history. Cache hits still link the
+      // user to the cache entry. Always consumes one API request.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ topic, store, country, lang }) =>
+      jsonResponse(await callApi('/niches', { params: { topic, store, country, lang } }))
+  );
+
+  server.registerTool(
+    'list_niche_analyses',
+    {
+      title: 'List niche analyses',
+      description:
+        'List the niche analyses previously run, with topic, store, country, lang, cluster count, keyword count, top opportunity score and creation date. Paginated through page and per_page. Read-only: it re-reads work already done, so call it before run_niche_analysis to check whether a topic was already covered. It returns summary rows only, not the clusters and keywords themselves.',
+      inputSchema: {
+        page: PAGE_SCHEMA,
+        per_page: PER_PAGE_HISTORY_SCHEMA,
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ page, per_page }) =>
+      jsonResponse(
+        await callApi('/niches/history', { params: buildParams({ page, per_page }) })
+      )
+  );
+
+  server.registerTool(
+    'top_charts',
+    {
+      title: 'Get store top charts',
+      description:
+        'Get a store top-chart ranking (App Store or Google Play) for a country, category and collection, with daily rank movement. Returns the snapshot date and ranked apps (rank, app_id, apple_id, title, developer, icon, rating, price, currency, delta vs. yesterday, is_new). Category: pass "OVERALL" (default) for the overall chart, or a store category value (iTunes genre id e.g. "6014" for Games, or a Google Play category e.g. "GAME"). Collection: free (default), paid, or grossing.',
+      inputSchema: {
+        store: STORE_SCHEMA,
+        country: COUNTRY_SCHEMA,
+        category: z
+          .string()
+          .optional()
+          .describe(
+            'Category key: "OVERALL" (default) or a store category value (iTunes genre id e.g. "6014", Google Play category e.g. "GAME")'
+          ),
+        collection: z
+          .enum(['free', 'paid', 'grossing'])
+          .optional()
+          .describe('Chart type: free (default), paid, or grossing'),
+        limit: z.string().optional().describe('Max rows to return (max 200, default 100)'),
+      },
+      annotations: READ_ONLY_PUBLIC_DATA,
+    },
+    async ({ store, country, category, collection, limit }) =>
+      jsonResponse(
+        await callApi('/top-charts', {
+          params: buildParams({ store, country, category, collection, limit }),
+        })
+      )
+  );
+
+  server.registerTool(
+    'list_top_chart_categories',
+    {
+      title: 'List top chart categories',
+      description:
+        'List the categories and collections supported by the top_charts tool, per store. Use a returned category "key" (e.g. "OVERALL" for the overall chart, or a store value like "6014" / "GAME") and a collection (free, paid, grossing) as inputs to top_charts.',
+      inputSchema: {
+        store: z
+          .enum(['GPLAY', 'ITUNES'])
+          .optional()
+          .describe('Filter to one store; omit to get both'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ store }) =>
+      jsonResponse(await callApi('/top-charts/categories', { params: buildParams({ store }) }))
+  );
+
+  server.registerTool(
+    'get_account_usage',
+    {
+      title: 'Get account usage',
+      description:
+        'Get current account usage and plan limits: number of applications, keywords, competitors, keyword inspections, niche analyses, autocomplete queries and metadata simulations used vs. allowed, plus API request count for the current billing period.',
+      annotations: READ_ONLY,
+    },
+    async () => jsonResponse(await callApi('/account/usage'))
+  );
+
+  return server;
+}

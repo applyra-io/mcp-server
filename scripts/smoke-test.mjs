@@ -22,6 +22,11 @@ const names = tools.map((t) => t.name).sort();
 
 const undescribed = tools.filter((t) => !t.description || t.description.length < 40);
 const unschemad = tools.filter((t) => !t.inputSchema);
+// The ChatGPT plugin directory rejects a tool that leaves any of these three
+// hints implicit, and the Claude connector directory one without a title.
+const HINTS = ['readOnlyHint', 'destructiveHint', 'openWorldHint'];
+const unannotated = tools.filter((t) => HINTS.some((hint) => typeof t.annotations?.[hint] !== 'boolean'));
+const untitled = tools.filter((t) => !t.title);
 
 await client.close();
 
@@ -38,6 +43,14 @@ if (undescribed.length) {
 }
 if (unschemad.length) {
   console.error(`FAIL tools without an input schema: ${unschemad.map((t) => t.name).join(', ')}`);
+  failed = true;
+}
+if (unannotated.length) {
+  console.error(`FAIL tools without explicit ${HINTS.join(', ')}: ${unannotated.map((t) => t.name).join(', ')}`);
+  failed = true;
+}
+if (untitled.length) {
+  console.error(`FAIL tools without a title: ${untitled.map((t) => t.name).join(', ')}`);
   failed = true;
 }
 
