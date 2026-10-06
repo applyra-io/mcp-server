@@ -143,7 +143,15 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     version,
   });
 
-  server.registerTool(
+  /**
+   * Every tool goes through here, so its title is also written to annotations.title:
+   * MCP clients read the tool's own `title`, the Claude connector directory reads the
+   * annotation, and flags every tool that lacks it.
+   */
+  const registerTool: McpServer['registerTool'] = (name, config, callback) =>
+    server.registerTool(name, { ...config, annotations: { title: config.title, ...config.annotations } }, callback);
+
+  registerTool(
     'list_applications',
     {
       title: 'List applications',
@@ -161,7 +169,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(await callApi('/applications', { params: buildParams({ app_id }) }))
   );
 
-  server.registerTool(
+  registerTool(
     'add_application',
     {
       title: 'Add an application',
@@ -193,7 +201,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'list_keywords',
     {
       title: 'List tracked keywords',
@@ -224,7 +232,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'inspect_keyword',
     {
       title: 'Inspect a keyword',
@@ -251,7 +259,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'list_keyword_inspections',
     {
       title: 'List keyword inspections',
@@ -269,7 +277,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'get_keyword_rank_history',
     {
       title: 'Get keyword rank history',
@@ -299,7 +307,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'set_keyword_favorite',
     {
       title: 'Mark a keyword as favorite',
@@ -334,7 +342,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'track_keywords',
     {
       title: 'Track keywords',
@@ -372,7 +380,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'untrack_keyword',
     {
       title: 'Untrack a keyword',
@@ -399,7 +407,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'get_app_score_history',
     {
       title: 'Get visibility score history',
@@ -428,7 +436,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'get_aso_health',
     {
       title: 'Get the ASO Health audit',
@@ -463,7 +471,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'check_metadata',
     {
       title: 'Check listing metadata',
@@ -498,7 +506,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'simulate_metadata',
     {
       title: 'Simulate listing metadata',
@@ -566,7 +574,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(await callApi('/metadata/simulate', { method: 'POST', body: input }))
   );
 
-  server.registerTool(
+  registerTool(
     'list_metadata_simulations',
     {
       title: 'List metadata simulations',
@@ -587,7 +595,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'get_metadata_simulation',
     {
       title: 'Get a metadata simulation',
@@ -603,7 +611,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     async ({ id }) => jsonResponse(await callApi(`/metadata/simulate/history/${id}`))
   );
 
-  server.registerTool(
+  registerTool(
     'list_competitors',
     {
       title: 'List competitors',
@@ -621,7 +629,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(await callApi('/competitors', { params: buildParams({ app_id }) }))
   );
 
-  server.registerTool(
+  registerTool(
     'add_competitor',
     {
       title: 'Add a competitor',
@@ -658,7 +666,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'remove_competitor',
     {
       title: 'Remove a competitor',
@@ -680,7 +688,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(await callApi(`/competitors/${relation_id}`, { method: 'DELETE' }))
   );
 
-  server.registerTool(
+  registerTool(
     'run_autocomplete',
     {
       title: 'Get store autocomplete suggestions',
@@ -709,7 +717,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'list_autocomplete_history',
     {
       title: 'List autocomplete history',
@@ -727,7 +735,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'run_niche_analysis',
     {
       title: 'Run a niche analysis',
@@ -755,7 +763,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(await callApi('/niches', { params: { topic, store, country, lang } }))
   );
 
-  server.registerTool(
+  registerTool(
     'list_niche_analyses',
     {
       title: 'List niche analyses',
@@ -773,7 +781,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'top_charts',
     {
       title: 'Get store top charts',
@@ -804,7 +812,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       )
   );
 
-  server.registerTool(
+  registerTool(
     'list_top_chart_categories',
     {
       title: 'List top chart categories',
@@ -822,7 +830,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(await callApi('/top-charts/categories', { params: buildParams({ store }) }))
   );
 
-  server.registerTool(
+  registerTool(
     'get_account_usage',
     {
       title: 'Get account usage',
