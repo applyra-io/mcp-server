@@ -13,7 +13,7 @@ MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It co
 The same tools are hosted at `https://www.applyra.io/api/mcp` (Streamable HTTP, OAuth). Nothing to install and no API key: the client opens an Applyra sign-in page, you approve it, and it is connected. It requires an Applyra account with the **Unlimited plan**.
 
 - **ChatGPT**: on chatgpt.com, Plugins > Add > Create custom MCP server, with this URL and OAuth authentication, then Create as a plugin. Read and write tools both work on a ChatGPT Plus plan.
-- **Claude**: Customize > Connectors > Add custom connector, with this URL.
+- **Claude**: add it from the [Claude directory](https://claude.ai/directory/applyra) in one click (on the web, desktop, mobile and in Claude Code), or as a custom connector with this URL (Customize > Connectors > Add custom connector).
 - **Gemini CLI**: `gemini extensions install https://github.com/applyra-io/mcp-server`, then sign in when Gemini CLI asks.
 - **VS Code, Cursor, Perplexity, Smithery** and any client that supports remote MCP servers with OAuth: add this URL as a remote (HTTP) server.
 

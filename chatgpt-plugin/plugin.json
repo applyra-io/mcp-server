@@ -1,0 +1,105 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "applyra",
+  "version": "1.6.2",
+  "description": "App Store and Google Play keyword rankings, keyword difficulty and traffic, competitors, ASO Health audits and listing simulation from your Applyra account, with a skill that knows how to use them.",
+  "author": {
+    "name": "Applyra",
+    "email": "hello@applyra.io",
+    "url": "https://www.applyra.io"
+  },
+  "homepage": "https://www.applyra.io/features/mcp-server",
+  "repository": "https://github.com/applyra-io/mcp-server",
+  "license": "MIT",
+  "keywords": ["aso", "app-store-optimization", "app-store", "google-play", "keywords"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Applyra",
+        "shortDescription": "App Store and Google Play ASO",
+        "longDescription": "Applyra tracks how your apps rank on the App Store and Google Play every day. This plugin brings that data into the conversation, so the assistant answers from your own account instead of from memory.\n\nAsk which keywords moved this month, and it reads your positions, the apps just ahead and behind you, and the rank history of each keyword. Ask whether a keyword is worth targeting, and it inspects its difficulty and traffic scores, its KEI and the apps ranking for it. Draft a new title, subtitle, short description or iOS keywords field, and Applyra checks it against each store's rules, then scores it on the same engine that audits live listings, so you see the gain or loss before you ship.\n\nIt also reads the ASO Health audit of a listing and the visibility score history of an app, compares your app with its competitors, runs store autocomplete and niche analyses, and reads the top charts of both stores. When you ask for it, it tracks or untracks keywords and competitors in your Applyra account.\n\nBuilt for indie developers, solo founders and small studios who publish their own apps.\n\nYour listings stay in your hands: Applyra reads and scores, and you publish the changes yourself in App Store Connect or the Google Play Console. You sign in with an Applyra account that includes API access.",
+        "developerName": "Krnel Studio",
+        "category": "Data & Analytics",
+        "capabilities": [
+          "Read keyword rankings and rank history",
+          "Inspect keyword difficulty and traffic",
+          "Audit a listing with ASO Health",
+          "Check and score draft listing text",
+          "Compare an app with its competitors",
+          "Run store autocomplete and niche analyses",
+          "Read App Store and Google Play top charts",
+          "Track keywords and competitors"
+        ],
+        "websiteURL": "https://www.applyra.io",
+        "supportURL": "https://www.applyra.io/contact",
+        "privacyPolicyURL": "https://www.applyra.io/privacy",
+        "termsOfServiceURL": "https://www.applyra.io/terms",
+        "defaultPrompt": [
+          "Which of my tracked keywords moved the most this month?",
+          "Audit my app's store listing and tell me what to fix first.",
+          "Find keywords worth targeting for my app."
+        ],
+        "brandColor": "#284C9D",
+        "composerIcon": "./assets/logo.png",
+        "logo": "./assets/logo.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Read the current keyword rankings of a tracked app",
+              "prompt": "How does Todoist rank on Google Play in the US for the keywords I track?",
+              "tools_triggered": "list_applications, list_keywords",
+              "expected_behavior": "Lists the keywords tracked for Todoist on Google Play US (such as to do list, task manager, daily planner) with Todoist's current position on each, or that it is not ranked, and the apps just ahead and behind where they exist. Figures stay on Google Play US."
+            },
+            {
+              "description": "Explain how rankings moved over time",
+              "prompt": "Which of Todoist's App Store keywords moved the most over the last 30 days?",
+              "tools_triggered": "list_applications, list_keywords, get_keyword_rank_history",
+              "expected_behavior": "Reads the rank history of the keywords tracked for Todoist on the US App Store and reports the largest moves first, with the position before and after and their dates. Keywords whose position held steady are reported as stable rather than given an invented change."
+            },
+            {
+              "description": "Inspect a keyword the account does not track",
+              "prompt": "Is \"habit tracker\" a realistic keyword to target on the US App Store? Show me who ranks for it.",
+              "tools_triggered": "inspect_keyword",
+              "expected_behavior": "Returns the difficulty and traffic scores (0 to 100) and the KEI for \"habit tracker\" on the US App Store, lists the apps ranking at the top for it, and gives a recommendation grounded in those numbers."
+            },
+            {
+              "description": "Check and score a draft listing before it is published",
+              "prompt": "Before I publish it, score this new Google Play short description for Todoist: \"To do list and daily planner: organize tasks, reminders and projects.\"",
+              "tools_triggered": "list_applications, check_metadata, simulate_metadata",
+              "expected_behavior": "Checks the draft against Google Play's rules (its length as the store counts it, and any warning), then scores it against Todoist's live Google Play listing and reports the ASO Health score of the draft with the gain or loss against the current score. Nothing is published to Google Play."
+            },
+            {
+              "description": "Track a new keyword for a tracked app",
+              "prompt": "Start tracking the keyword \"shared to do list\" for Todoist on Google Play in the US.",
+              "tools_triggered": "list_applications, track_keywords",
+              "expected_behavior": "Adds \"shared to do list\" to the keywords tracked for Todoist on Google Play US and confirms that it is now tracked, or that it already was. Only the Applyra account changes, never the store listing."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Publishing to a store is out of scope. Applyra never edits App Store Connect or Google Play listings, so the assistant should say so, may offer to score the text instead, and must not claim the subtitle was published.",
+              "prompt": "Publish this new subtitle to Todoist's App Store listing: \"To do list and daily planner\"."
+            },
+            {
+              "description": "Data outside the signed-in account. The plugin only reads the connected Applyra account, so the assistant should decline rather than look up or guess what another user tracks.",
+              "prompt": "Show me the keywords that TickTick's developers track in their own Applyra account."
+            },
+            {
+              "description": "Store reviews are not something Applyra reads or answers. The assistant should explain that the plugin cannot do it, call no Applyra tool, and not invent review text.",
+              "prompt": "Reply to the latest one-star reviews of Todoist on the App Store."
+            }
+          ]
+        },
+        "demo_recording_url": "https://drive.google.com/file/d/1VLEvCGxEUEmTBTo8Y0Zn9GikrpiCx4-d/view",
+        "commerce": false,
+        "commerce_description": "The plugin sells nothing: it reads and updates the signed-in user's own Applyra account."
+      },
+      "publication": {
+        "countries": [],
+        "release_notes": "First release in the ChatGPT directory: 25 tools over the user's Applyra account (keyword rankings and rank history, keyword inspection, ASO Health, metadata checks and simulations, competitors, store autocomplete, niche analyses, top charts) and the aso-research skill."
+      }
+    }
+  }
+}
