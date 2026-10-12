@@ -72,6 +72,8 @@ const LANG_SCHEMA = z
   .string()
   .describe('BCP-47 language-region code (e.g., en-US, fr-FR, de-DE)');
 const PAGE_SCHEMA = z.string().optional().describe('Page number (starts at 1)');
+/** An internal id, as the tools that write to a note or compare events take it. */
+const NUMERIC_ID = z.string().regex(/^\d+$/, 'A numeric ID');
 const PER_PAGE_HISTORY_SCHEMA = z
   .string()
   .optional()
@@ -96,6 +98,14 @@ const READ_ONLY_PUBLIC_DATA = { readOnlyHint: true, destructiveHint: false, open
 export function createApplyraServer({ baseUrl, headers, version }: ApplyraServerOptions): McpServer {
   async function callApi(path: string, options: CallApiOptions = {}): Promise<unknown> {
     const { params, method = 'GET', body } = options;
+    // Ids come from the model. Once the URL resolves its dots, a "note id" of
+    // "../competitors/12" would reach another endpoint: a delete_note call that
+    // removes a competitor. The URL parser also drops tabs and line breaks and
+    // decodes escapes before it resolves the dots, so each segment must be a
+    // plain word (a literal, a number or a store id), never a dot segment.
+    if (path.split('/').slice(1).some((segment) => !/^[\w.-]+$/.test(segment) || segment === '.' || segment === '..')) {
+      throw new Error(`Invalid id in ${path}: ids are numbers or store ids, never paths.`);
+    }
     const url = new URL(`/api/v1${path}`, baseUrl);
     if (params) {
       for (const [key, value] of Object.entries(params)) {
@@ -282,7 +292,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     {
       title: 'Get keyword rank history',
       description:
-        'Get the daily rank history of one tracked keyword, with one series per app that tracks it. Returns keyword, store, country, lang, the resolved from/to dates, and apps[] entries holding app_id, app_title and history[] of { date (YYYY-MM-DD), rank }, where rank is null on days the app did not rank. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass keyword_id from list_keywords, and app_id to narrow the output to one app. For the visibility of a whole app rather than one keyword, use get_app_score_history.',
+        'Get the daily rank history of one tracked keyword, with one series per app that tracks it. Returns keyword, store, country, lang, the resolved from/to dates, and apps[] entries holding app_id, app_title and history[] of { date (YYYY-MM-DD), rank }, one entry per day a ranking run measured: rank is null on days the app did not rank, and a day not measured yet (today before the daily update) is omitted. Each app entry also has events { notes[], app_updates[], store_updates[] } over the range: the user\'s notes on the app, its updates detected, and the store algorithm updates of the keyword\'s market, what may explain a move. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass keyword_id from list_keywords, and app_id to narrow the output to one app. For the visibility of a whole app rather than one keyword, use get_app_score_history.',
       inputSchema: {
         keyword_id: z
           .string()
@@ -412,7 +422,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     {
       title: 'Get visibility score history',
       description:
-        'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across a stable set of keywords from its niche, the same set over time, so two dates are directly comparable. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
+        'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across a stable set of keywords from its niche, the same set over time, so two dates are directly comparable. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot, plus events { notes[], app_updates[], store_updates[] } over the range: the user\'s notes, the app updates detected and the store algorithm updates of its market, what may explain a move. To measure what followed each event, use compare_events. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
       inputSchema: {
         app_id: z
           .string()
@@ -432,6 +442,103 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       jsonResponse(
         await callApi(`/applications/${app_id}/scores/history`, {
           params: buildParams({ from, to }),
+        })
+      )
+  );
+
+  registerTool(
+    'list_notes',
+    {
+      title: 'List notes',
+      description:
+        'List the notes on an application\'s charts: what the user did on a day ("launched a Reddit giveaway", "changed keywords"), to read the visibility and ranks against it. Returns app_id and notes[] of { id, number, day (YYYY-MM-DD), text, scope }, oldest first. number is the note\'s rank among all the app\'s notes, the number the charts print on its flag; scope is "app" for a note shown on every market of the app, "market" for one shown on this market only. Pass the numeric internal ID from list_applications. To see what followed each note, use compare_events. Read-only.',
+      inputSchema: {
+        app_id: NUMERIC_ID.describe('The application internal ID (numeric, from list_applications results)'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id }) => jsonResponse(await callApi(`/applications/${app_id}/notes`))
+  );
+
+  registerTool(
+    'add_note',
+    {
+      title: 'Add a note',
+      description:
+        'Add a note to an application\'s charts for something done on a day: a campaign, a metadata change, a launch, a price change. It shows as a flag on the visibility and keyword rank charts, and compare_events then measures the visibility and ranks before and after it. Returns { app_id, note: { id, day, text, scope } }. The day is today or earlier; a future day is refused.',
+      inputSchema: {
+        app_id: NUMERIC_ID.describe('The application internal ID (numeric, from list_applications results)'),
+        text: z.string().describe('What happened, 1 to 120 characters (e.g. "Launched a Reddit giveaway")'),
+        day: z.string().optional().describe('The day in YYYY-MM-DD format, today or earlier. Defaults to today (UTC).'),
+        scope: z
+          .enum(['app', 'market'])
+          .optional()
+          .describe('"app" (default) shows the note on every market of the app, "market" on this market only'),
+      },
+      // Additive: a new note, nothing overwritten. Not idempotent, a second call adds a second note.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ app_id, text, day, scope }) =>
+      jsonResponse(await callApi(`/applications/${app_id}/notes`, { method: 'POST', body: { text, day, scope } }))
+  );
+
+  registerTool(
+    'update_note',
+    {
+      title: 'Change a note',
+      description:
+        'Change the text, the day or both of a note; a field left out keeps its value. Pass the note id from list_notes. A note moved to an earlier or later day can renumber the others. Returns { note: { id, day, text, scope } }.',
+      inputSchema: {
+        note_id: NUMERIC_ID.describe('The note ID (numeric, from list_notes results)'),
+        text: z.string().optional().describe('The new text, 1 to 120 characters'),
+        day: z.string().optional().describe('The new day in YYYY-MM-DD format, today or earlier'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ note_id, text, day }) =>
+      jsonResponse(await callApi(`/notes/${note_id}`, { method: 'PATCH', body: { text, day } }))
+  );
+
+  registerTool(
+    'delete_note',
+    {
+      title: 'Delete a note',
+      description: 'Delete a note from an application\'s charts. Pass the note id from list_notes. The notes after it are renumbered. Returns { id, deleted: true }.',
+      inputSchema: {
+        note_id: NUMERIC_ID.describe('The note ID (numeric, from list_notes results)'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ note_id }) => jsonResponse(await callApi(`/notes/${note_id}`, { method: 'DELETE' }))
+  );
+
+  registerTool(
+    'compare_events',
+    {
+      title: 'Compare before and after each event',
+      description:
+        'Measure what followed each event of an application: the user\'s notes and the app updates detected, newest first, over the last year. For each event, the average over the window days before against the same number of days after (the event day itself in neither): the app\'s visibility score (0-100, higher is better) by default, or with keyword_id, that keyword\'s rank for the app (lower is better, so a negative change means the app climbed; a day outside the top 100 counts as #101, and unranked_days says how many there were). Returns metric, window_days, history_start, total (how many events there are) and comparisons[] (the newest `limit`) of { day, notes[], app_updates[], before, after, change, locked, alongside }, where before/after hold { from, to, average, measured_days, pending_days (not measured yet), hidden_days (before the plan\'s history) }. alongside names the other notes, app updates and store algorithm updates inside the same days: a comparison describes what followed an event, not what caused it, so read it with them. Read-only.',
+      inputSchema: {
+        app_id: NUMERIC_ID.describe('The application internal ID (numeric, from list_applications results)'),
+        keyword_id: NUMERIC_ID.optional().describe(
+          'A keyword internal ID (from list_keywords) to compare its rank for this app instead of the visibility score'
+        ),
+        window: z
+          .enum(['7', '14', '30'])
+          .optional()
+          .describe('Days compared on each side of an event: 7 (default), 14 or 30'),
+        limit: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe('How many comparisons, newest first: 1 to 100, default 20'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ app_id, keyword_id, window, limit }) =>
+      jsonResponse(
+        await callApi(keyword_id ? `/keywords/${keyword_id}/apps/${app_id}/events` : `/applications/${app_id}/events`, {
+          params: buildParams({ window, limit }),
         })
       )
   );

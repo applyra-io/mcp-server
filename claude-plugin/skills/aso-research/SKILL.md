@@ -20,8 +20,9 @@ App Store Connect or Google Play: the user ships changes themselves.
 - **Let `check_metadata` count lengths.** The stores count UTF-16 code units, not characters, so a
   count done by hand is wrong in many languages.
 - **Ask before changing the account.** `track_keywords`, `untrack_keyword`, `set_keyword_favorite`,
-  `add_application`, `add_competitor` and `remove_competitor` change what Applyra tracks. Every other
-  tool only reads.
+  `add_application`, `add_competitor` and `remove_competitor` change what Applyra tracks, and
+  `add_note`, `update_note` and `delete_note` change the notes on its charts. Every other tool only
+  reads.
 - **Reuse past work first.** `list_keyword_inspections`, `list_niche_analyses`,
   `list_metadata_simulations` and `list_autocomplete_history` return what was already run.
 
@@ -34,7 +35,17 @@ App Store Connect or Google Play: the user ships changes themselves.
    with the large ones.
 4. When many keywords fell on the same day, `get_app_score_history` shows whether the app's overall
    visibility fell with them. A drop across the board on one date usually comes from the store, not
-   from the listing.
+   from the listing: its `events.store_updates` list the store algorithm updates of the market.
+
+## What a change did
+
+1. `list_notes` shows what the user noted (a campaign, a metadata change, a launch); `compare_events`
+   gives the visibility before and after each note and each app update, or, with `keyword_id`, one
+   keyword's rank. 7 days on each side by default, 14 or 30 for a slower effect.
+2. Read each comparison with its `alongside`: another event or a store algorithm update in the same
+   days is mixed into it. Say so rather than credit the change with the whole move.
+3. A user who describes something they did on a given day can have it noted with `add_note`, after
+   asking.
 
 ## Keywords worth targeting
 

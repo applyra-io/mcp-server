@@ -6,7 +6,7 @@
 
 MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like ChatGPT, Claude, Cursor, Codex, VS Code Copilot, and more.
 
-25 tools covering keyword rank tracking, difficulty and traffic scoring, listing audits and metadata simulation, competitor visibility, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
+30 tools covering keyword rank tracking, difficulty and traffic scoring, listing audits and metadata simulation, competitor visibility, notes on your charts and what followed each one, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
 
 ## Remote server (ChatGPT, Claude, Gemini CLI, VS Code, Cursor)
 
@@ -135,7 +135,12 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `top_charts` | Top apps chart for a store/country/category/collection, with daily rank movement |
 | `list_top_chart_categories` | Categories and collections supported by `top_charts`, per store |
 | `get_keyword_rank_history` | Daily rank evolution over a date range |
-| `get_app_score_history` | Daily visibility score history for an app |
+| `get_app_score_history` | Daily visibility score history for an app, with the notes and updates in the range |
+| `list_notes` | The notes on an app's charts, numbered like their flags |
+| `add_note` | Note what you did on a day (a campaign, a metadata change, a launch) |
+| `update_note` | Change the text or the day of a note |
+| `delete_note` | Delete a note |
+| `compare_events` | Visibility, or a keyword's rank, before and after each note and app update |
 | `get_aso_health` | Full listing audit for an app: coverage, targeting and appeal, every field, and what to fix |
 | `check_metadata` | Check draft listing text against each store's limits and forbidden copy. Instant, no store lookup |
 | `simulate_metadata` | Score a listing that does not exist yet and see the gain against the app's current score |
