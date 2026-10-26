@@ -26,7 +26,8 @@ Claude ask you first. They never publish anything to App Store Connect or Google
 
 ## Requirements
 
-An Applyra account on the paid plan.
+An Applyra account. The free plan includes 50 requests a month, each tool call being one request,
+on 1 app, 5 keywords and 1 competitor. Plan details: https://www.applyra.io/pricing
 
 ## Links
 

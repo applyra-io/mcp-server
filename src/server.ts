@@ -45,6 +45,109 @@ function describeError(body: unknown, fallback: string): string {
   return parts.join(' | ');
 }
 
+/**
+ * The answers a plan limit or a busy account gets, as an ordinary tool result.
+ *
+ * Reached limits are not failures of the tool: the call was understood and the
+ * account's plan decides. Thrown, they would come back as `isError`, which the
+ * Claude directory counts against the connector's health, and their API wording
+ * is written for the dashboard. ChatGPT's plugin rules allow saying a feature is
+ * not included in the plan and pointing at a page that describes the plans,
+ * nothing more: no upgrade prompt, no price, no trial. Hence one neutral
+ * sentence per limit and the pricing page as `plan_details`.
+ *
+ * The caps above are the free plan's. On Unlimited the only limit with a number
+ * is the public API quota (QUOTA_EXCEEDED). A request an internal safeguard held
+ * back answers CONTACT_SUPPORT, and an account whose access was turned off
+ * PLAN_REQUIRED: both are about this account, not about a plan, so they get
+ * support and never the pricing page or a number.
+ */
+const PLAN_DETAILS_URL = 'https://www.applyra.io/pricing';
+const SUPPORT_URL = 'https://www.applyra.io/contact';
+
+const SUPPORT_MESSAGES: Record<string, string> = {
+  CONTACT_SUPPORT: `Applyra could not process this request. Contact Applyra support at ${SUPPORT_URL} and they will sort it out.`,
+  PLAN_REQUIRED: `API access is turned off for this Applyra account. Contact Applyra support at ${SUPPORT_URL} to turn it back on.`,
+};
+
+const LIMIT_MESSAGES: Record<string, string> = {
+  APP_LIMIT_REACHED: 'This Applyra account already tracks the number of apps its plan includes, so nothing was added.',
+  COMPETITOR_LIMIT_REACHED:
+    'This Applyra account already tracks the number of competitors its plan includes, so nothing was added.',
+  KEYWORD_LIMIT_REACHED:
+    'Adding these keywords would go past the number of tracked keywords this account\'s plan includes, so nothing was added.',
+  INSPECTOR_QUOTA_EXCEEDED: 'This account has used the keyword inspections its plan includes for this month.',
+  SIMULATION_QUOTA_EXCEEDED: 'This account has used the metadata simulations its plan includes for this month.',
+  AUTOCOMPLETE_QUOTA_EXCEEDED: 'This account has used the autocomplete queries its plan includes for this month.',
+};
+
+export function planLimitResult(status: number, body: unknown): Record<string, unknown> | null {
+  const payload = (body ?? {}) as {
+    error?: unknown;
+    code?: unknown;
+    usage?: { current?: unknown; limit?: unknown };
+    details?: { current?: unknown; limit?: unknown };
+  };
+  const code = typeof payload.code === 'string' ? payload.code : '';
+  const counts = payload.usage ?? payload.details ?? {};
+  const limit = typeof counts.limit === 'number' ? counts.limit : undefined;
+
+  if (SUPPORT_MESSAGES[code]) {
+    return { done: false, code, message: SUPPORT_MESSAGES[code], contact: SUPPORT_URL };
+  }
+
+  if (status === 409 && code === 'BUSY') {
+    return {
+      done: false,
+      busy: true,
+      message: 'Another request of this kind is still running on this account. Wait a few seconds, then try again.',
+      retry_after_seconds: 5,
+    };
+  }
+
+  let message: string | undefined;
+  if (code === 'QUOTA_EXCEEDED') {
+    // The same code for the account's monthly API requests (sent with `usage`)
+    // and for its niche analyses (sent with `details`).
+    message = payload.usage
+      ? 'This account has used the API requests its plan includes for this month.'
+      : 'This account has used the niche analyses its plan includes for this month.';
+  } else if (code === 'PLAN_LIMIT') {
+    // Already written neutrally by the API: the plan's history window and the
+    // earliest date available.
+    message = typeof payload.error === 'string' ? payload.error : 'This range is outside what this account\'s plan includes.';
+  } else {
+    message = LIMIT_MESSAGES[code];
+  }
+  if (!message) return null;
+
+  return {
+    done: false,
+    included_in_plan: false,
+    code,
+    message,
+    ...(limit !== undefined ? { plan_limit: limit } : {}),
+    plan_details: PLAN_DETAILS_URL,
+  };
+}
+
+/**
+ * What the assistant reads once, on connecting. Many accounts connect from
+ * ChatGPT or Claude right after signing up, with nothing tracked yet: the
+ * assistant has to know that the first useful step is adding their app, and how
+ * to get the store ID it needs from the user.
+ */
+const SERVER_INSTRUCTIONS = [
+  'Applyra tracks App Store and Google Play keyword rankings for the user\'s own apps, scores keywords (difficulty, traffic) and listings, and follows competitors.',
+  'Start with list_applications: the numeric ids it returns are what the app-scoped tools expect.',
+  'If the account tracks no app yet, ask the user for their app\'s App Store or Google Play link and the country they sell in, then call add_application with the store ID from the link (the number after "id" on the App Store, the "id=" value on Google Play). Then offer to suggest keywords with inspect_keyword and to track the good ones with track_keywords.',
+  'When a tool answers with done: false, tell the user in plain words what it says. Retry only an answer marked busy, once, after retry_after_seconds; any other refusal will not change on a retry.',
+].join(' ');
+
+/** Added to an empty list_applications answer, where a new account starts. */
+const NO_APP_YET =
+  'This Applyra account tracks no app yet. Ask the user for the App Store or Google Play link of their app and the country they sell in, then call add_application with the store ID from that link.';
+
 function buildParams(
   entries: Record<string, string | undefined>
 ): Record<string, string> | undefined {
@@ -70,7 +173,9 @@ const STORE_SCHEMA = z
 const COUNTRY_SCHEMA = z.string().describe('ISO country code (e.g., US, FR, DE)');
 const LANG_SCHEMA = z
   .string()
-  .describe('BCP-47 language-region code (e.g., en-US, fr-FR, de-DE)');
+  .describe(
+    'BCP-47 language-region code of the listing language (e.g., en-US, fr-FR, de-DE). The country picks the market, not the region of the language: Arabic is ar-SA in every country, so Arabic in Morocco is country MA with lang ar-SA',
+  );
 const PAGE_SCHEMA = z.string().optional().describe('Page number (starts at 1)');
 /** An internal id, as the tools that write to a note or compare events take it. */
 const NUMERIC_ID = z.string().regex(/^\d+$/, 'A numeric ID');
@@ -142,16 +247,21 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     }
 
     if (!response.ok) {
+      const limited = planLimitResult(response.status, responseBody);
+      if (limited) return limited;
       throw new Error(`Applyra API error (${response.status}): ${describeError(responseBody, response.statusText)}`);
     }
 
     return responseBody;
   }
 
-  const server = new McpServer({
-    name: 'applyra',
-    version,
-  });
+  const server = new McpServer(
+    {
+      name: 'applyra',
+      version,
+    },
+    { instructions: SERVER_INSTRUCTIONS }
+  );
 
   /**
    * Every tool goes through here, so its title is also written to annotations.title:
@@ -175,8 +285,11 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       },
       annotations: READ_ONLY,
     },
-    async ({ app_id }) =>
-      jsonResponse(await callApi('/applications', { params: buildParams({ app_id }) }))
+    async ({ app_id }) => {
+      const result = await callApi('/applications', { params: buildParams({ app_id }) });
+      const apps = (result as { data?: unknown })?.data;
+      return jsonResponse(!app_id && Array.isArray(apps) && apps.length === 0 ? { ...(result as object), next_step: NO_APP_YET } : result);
+    }
   );
 
   registerTool(
@@ -292,7 +405,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     {
       title: 'Get keyword rank history',
       description:
-        'Get the daily rank history of one tracked keyword, with one series per app that tracks it. Returns keyword, store, country, lang, the resolved from/to dates, and apps[] entries holding app_id, app_title and history[] of { date (YYYY-MM-DD), rank }, one entry per day a ranking run measured: rank is null on days the app did not rank, and a day not measured yet (today before the daily update) is omitted. Each app entry also has events { notes[], app_updates[], store_updates[] } over the range: the user\'s notes on the app, its updates detected, and the store algorithm updates of the keyword\'s market, what may explain a move. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass keyword_id from list_keywords, and app_id to narrow the output to one app. For the visibility of a whole app rather than one keyword, use get_app_score_history.',
+        'Get the daily rank history of one tracked keyword, with one series per app that tracks it. Returns keyword, store, country, lang, the resolved from/to dates, and apps[] entries holding app_id, app_title and history[] of { date (YYYY-MM-DD), rank }, one entry per day a ranking run measured: rank is null on days the app did not rank, and a day not measured yet (today before the daily update) is omitted. Each app entry also has events { notes[], app_updates[], store_updates[] } over the range: the user\'s notes on the app, its updates detected, and the store algorithm updates of the keyword\'s market, what may explain a move. Defaults to the last 30 days, shortened to the plan\'s history window. An explicit start date older than the plan\'s history returns a PLAN_LIMIT result; any request reaches back 400 days at most. Reversed dates are swapped and future dates are clamped to today. Pass keyword_id from list_keywords, and app_id to narrow the output to one app. For the visibility of a whole app rather than one keyword, use get_app_score_history.',
       inputSchema: {
         keyword_id: z
           .string()
@@ -422,7 +535,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
     {
       title: 'Get visibility score history',
       description:
-        'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across a stable set of keywords from its niche, the same set over time, so two dates are directly comparable. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot, plus events { notes[], app_updates[], store_updates[] } over the range: the user\'s notes, the app updates detected and the store algorithm updates of its market, what may explain a move. To measure what followed each event, use compare_events. Defaults to the last 30 days. The window is capped at 400 days and at the plan history depth: a start date beyond it returns a PLAN_LIMIT error. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
+        'Get the daily visibility score history of one application. The visibility score (0-100) summarises how discoverable the app is across a stable set of keywords from its niche, the same set over time, so two dates are directly comparable. Returns app_id, app_title, the resolved from/to dates, and history[] of { date (YYYY-MM-DD), score }, where score is null on days with no snapshot, plus events { notes[], app_updates[], store_updates[] } over the range: the user\'s notes, the app updates detected and the store algorithm updates of its market, what may explain a move. To measure what followed each event, use compare_events. Defaults to the last 30 days, shortened to the plan\'s history window. An explicit start date older than the plan\'s history returns a PLAN_LIMIT result; any request reaches back 400 days at most. Reversed dates are swapped and future dates are clamped to today. Pass the numeric internal ID from list_applications, not the store bundle ID. For one keyword rank over time, use get_keyword_rank_history.',
       inputSchema: {
         app_id: z
           .string()
@@ -552,7 +665,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
         + 'THE AXES: coverage = how much searched vocabulary the indexed fields carry; targeting = whether the terms it aims at are winnable AT THIS APP\'S SIZE; appeal = rating, screenshots and freshness. '
         + 'TIER drives targeting: 1 Emerging, 2 Growing, 3 Established. The verdict threshold moves with it, so the same term can be "ambitious" for a tier 2 app and "out-of-reach" for a tier 1 one, and a tier 3 app can reasonably aim higher. Say that when you explain a verdict. '
         + 'fields[].state is "scored", "empty" (blank on the store) or "missing" (the iOS keywords field, which Apple never publishes: we only know it if the user gave it to us). fields[].key stays "subtitle" on Google Play, where the store calls that field the short description: use the store\'s name when you talk to the user. fields[].text is TRUNCATED to a preview and fields[].truncated says so; the full text is on list_applications. '
-        + 'targeting.keywords[].verdict is "reachable", "ambitious" or "out-of-reach"; traffic and difficulty are both 0-100. targeting.ungraded counts searched terms we have no competition data for; targeting.unsearched counts words nobody types, listed in unsearched_words. targeting.assessable is false when the listing holds no searched term at all, and then there is no targeting to judge. '
+        + 'targeting.keywords[].verdict is "reachable", "ambitious" or "out-of-reach"; traffic and difficulty are both 0-100. targeting.ungraded counts searched terms we have no competition data for; targeting.unsearched counts words nobody types, listed in unsearched_words. phrases[] lists the searched PHRASES the listing forms across its indexed fields (text, traffic 0-100, words with the field each comes from): a word nobody types alone still earns coverage when it completes one, and removing it breaks the phrase. targeting.assessable is false when the listing holds no searched term at all, and then there is no targeting to judge. '
         + 'report is null on an app the audit has never reached, which is not a score of zero. '
         + 'The audit is kept up to date automatically, so this reads a stored result and answers in milliseconds: call it as often as you need. For visibility over time instead, use get_app_score_history; to score a listing that does not exist yet, use simulate_metadata.',
       inputSchema: {
@@ -565,7 +678,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
           .boolean()
           .optional()
           .describe(
-            'Add the per-word table of every indexed field: name, traffic (0-100), difficulty (0-100), occurrences and status. STATUS values: "earning" (real search demand, and this field is credited for it), "already-used" (an earlier field already claimed it; the stores index a word once), "not-searched" (indexed, but nobody types it here), "pending" (no search data yet on this storefront), and on the Google Play long description "covered" / "missing" (does it repeat what the title and short description target) and "extra-reach" (a searched word it carries that no other field does). occurrences is only counted on the Google Play long description, where repetition is visible; it is null elsewhere, because a word is either in the field or not. Off by default: it is detail you rarely need to answer how a listing is doing.'
+            'Add the per-word table of every indexed field: name, traffic (0-100), difficulty (0-100), occurrences and status. STATUS values: "earning" (real search demand, and this field is credited for it), "already-used" (an earlier field already claimed it; the stores index a word once), "not-searched" (indexed, but nobody types it here), "in-phrase" (nobody types it alone, but it completes a searched phrase, named in its "phrase" with the traffic of that phrase; it earns coverage like a keyword), "pending" (no search data yet on this storefront), and on the Google Play long description "covered" / "missing" (does it repeat what the title and short description target) and "extra-reach" (a searched word it carries that no other field does). occurrences is only counted on the Google Play long description, where repetition is visible; it is null elsewhere, because a word is either in the field or not. Off by default: it is detail you rarely need to answer how a listing is doing.'
           ),
       },
       annotations: READ_ONLY,
@@ -621,7 +734,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
         'Score a listing that does not exist yet, on the same engine that audits the real ones, and see the gain or loss against the app\'s current score. '
         + 'WITH app_id: every field you leave out is read from that app\'s live listing AND its real context (rating, screenshots, age, languages), so { app_id, title } is a complete request and the delta is meaningful. This is the mode to use to answer "is my draft better than my listing". '
         + 'WITHOUT app_id: you must pass store, country and lang, and the context defaults to a listing NOBODY HAS PUBLISHED: no rating, no screenshot, one language. That deliberately floors the appeal axis, so the global score is NOT comparable to a real app\'s score and you must not present it as one. Compare the coverage axis instead, or pass `context` yourself to describe the app you have in mind. `context` works in both modes: any key you send overrides, any key you omit keeps the app\'s value (or the blank default). '
-        + 'Returns app (null without app_id), aso_health with the three axes and the tier, delta against the app\'s stored score (null for a draft from scratch, and each axis is independently null when it was never computed), flags[], the saved run, and notes[] for anything wrong with the request that did not stop it (a kw_field sent for a Google Play listing, which has none, is ignored and reported there). '
+        + 'Returns app (null without app_id), aso_health with the three axes and the tier, delta against the app\'s stored score (null for a draft from scratch, and each axis is independently null when it was never computed), flags[], lost_phrases[] (with app_id: the searched phrases the live listing forms that the draft breaks, with the words it dropped and the app\'s rank when it tracks the phrase; the score alone does not warn about these, so always report them), the saved run, and notes[] for anything wrong with the request that did not stop it (a kw_field sent for a Google Play listing, which has none, is ignored and reported there). '
         + 'words_probed is how many words the run weighed; words_fetched is how many of those had to be read from the store for the first time. words_fetched: 0 means everything was already known and the call was fast; a high one is why a call took several seconds, and it warms the cache for everyone afterwards. '
         + 'Expect a few seconds per call. Check the draft with check_metadata first, and change something meaningful between two calls rather than polling it. Re-read a past run in full with get_metadata_simulation, or list them with list_metadata_simulations.',
       inputSchema: {
@@ -907,7 +1020,7 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
           .enum(['free', 'paid', 'grossing'])
           .optional()
           .describe('Chart type: free (default), paid, or grossing'),
-        limit: z.string().optional().describe('Max rows to return (max 200, default 100)'),
+        limit: z.string().optional().describe('Max rows to return (1 to 100, default 100: charts cover the top 100 on both stores)'),
       },
       annotations: READ_ONLY_PUBLIC_DATA,
     },
