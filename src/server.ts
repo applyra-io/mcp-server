@@ -56,21 +56,23 @@ function describeError(body: unknown, fallback: string): string {
  * nothing more: no upgrade prompt, no price, no trial. Hence one neutral
  * sentence per limit and the pricing page as `plan_details`.
  *
- * The caps above are the free plan's. On Unlimited the only limit with a number
- * is the public API quota (QUOTA_EXCEEDED). A request an internal safeguard held
- * back answers CONTACT_SUPPORT, and an account whose access was turned off
- * PLAN_REQUIRED: both are about this account, not about a plan, so they get
- * support and never the pricing page or a number.
+ * The caps above are the free plan's, and so is PLAN_REQUIRED: the API and the
+ * MCP server are part of Unlimited, apart from the few requests an account
+ * created from an assistant starts with. On Unlimited the only limit with a
+ * number is the public API quota (QUOTA_EXCEEDED). A request an internal
+ * safeguard held back, or an account whose access was turned off by hand,
+ * answers CONTACT_SUPPORT: that is about this account, not about a plan, so it
+ * gets support and never the pricing page or a number.
  */
 const PLAN_DETAILS_URL = 'https://www.applyra.io/pricing';
 const SUPPORT_URL = 'https://www.applyra.io/contact';
 
 const SUPPORT_MESSAGES: Record<string, string> = {
   CONTACT_SUPPORT: `Applyra could not process this request. Contact Applyra support at ${SUPPORT_URL} and they will sort it out.`,
-  PLAN_REQUIRED: `API access is turned off for this Applyra account. Contact Applyra support at ${SUPPORT_URL} to turn it back on.`,
 };
 
 const LIMIT_MESSAGES: Record<string, string> = {
+  PLAN_REQUIRED: 'Using Applyra from an AI assistant or through the API is not included in this account\'s plan.',
   APP_LIMIT_REACHED: 'This Applyra account already tracks the number of apps its plan includes, so nothing was added.',
   COMPETITOR_LIMIT_REACHED:
     'This Applyra account already tracks the number of competitors its plan includes, so nothing was added.',
@@ -85,7 +87,7 @@ export function planLimitResult(status: number, body: unknown): Record<string, u
   const payload = (body ?? {}) as {
     error?: unknown;
     code?: unknown;
-    usage?: { current?: unknown; limit?: unknown };
+    usage?: { current?: unknown; limit?: unknown; renews?: unknown };
     details?: { current?: unknown; limit?: unknown };
   };
   const code = typeof payload.code === 'string' ? payload.code : '';
@@ -107,11 +109,16 @@ export function planLimitResult(status: number, body: unknown): Record<string, u
 
   let message: string | undefined;
   if (code === 'QUOTA_EXCEEDED') {
-    // The same code for the account's monthly API requests (sent with `usage`)
-    // and for its niche analyses (sent with `details`).
-    message = payload.usage
-      ? 'This account has used the API requests its plan includes for this month.'
-      : 'This account has used the niche analyses its plan includes for this month.';
+    // The same code for the account's API requests (sent with `usage`) and for
+    // its niche analyses (sent with `details`). Requests that never come back
+    // (`renews: false`) must not send the user waiting for next month.
+    if (!payload.usage) {
+      message = 'This account has used the niche analyses its plan includes for this month.';
+    } else if (payload.usage.renews === false) {
+      message = 'This account has used the API requests its plan includes.';
+    } else {
+      message = 'This account has used the API requests its plan includes for this month.';
+    }
   } else if (code === 'PLAN_LIMIT') {
     // Already written neutrally by the API: the plan's history window and the
     // earliest date available.
