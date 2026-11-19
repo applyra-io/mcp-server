@@ -65,6 +65,10 @@ function describeError(body: unknown, fallback: string): string {
  * gets support and never the pricing page or a number.
  */
 const PLAN_DETAILS_URL = 'https://www.applyra.io/pricing';
+/** A limit the pricing page does not describe gets the page that does. */
+const PLAN_DETAILS_BY_CODE: Record<string, string> = {
+  AI_VISIBILITY_NOT_INCLUDED: 'https://www.applyra.io/docs/ai-visibility/what-is-ai-visibility',
+};
 const SUPPORT_URL = 'https://www.applyra.io/contact';
 
 const SUPPORT_MESSAGES: Record<string, string> = {
@@ -81,6 +85,7 @@ const LIMIT_MESSAGES: Record<string, string> = {
   INSPECTOR_QUOTA_EXCEEDED: 'This account has used the keyword inspections its plan includes for this month.',
   SIMULATION_QUOTA_EXCEEDED: 'This account has used the metadata simulations its plan includes for this month.',
   AUTOCOMPLETE_QUOTA_EXCEEDED: 'This account has used the autocomplete queries its plan includes for this month.',
+  AI_VISIBILITY_NOT_INCLUDED: 'AI Visibility, which tracks what ChatGPT and Gemini say about the user\'s apps, is not included in this account\'s plan.',
 };
 
 export function planLimitResult(status: number, body: unknown): Record<string, unknown> | null {
@@ -134,7 +139,7 @@ export function planLimitResult(status: number, body: unknown): Record<string, u
     code,
     message,
     ...(limit !== undefined ? { plan_limit: limit } : {}),
-    plan_details: PLAN_DETAILS_URL,
+    plan_details: PLAN_DETAILS_BY_CODE[code] ?? PLAN_DETAILS_URL,
   };
 }
 
@@ -148,6 +153,7 @@ const SERVER_INSTRUCTIONS = [
   'Applyra tracks App Store and Google Play keyword rankings for the user\'s own apps, scores keywords (difficulty, traffic) and listings, and follows competitors.',
   'Start with list_applications: the numeric ids it returns are what the app-scoped tools expect.',
   'If the account tracks no app yet, ask the user for their app\'s App Store or Google Play link and the country they sell in, then call add_application with the store ID from the link (the number after "id" on the App Store, the "id=" value on Google Play). Then offer to suggest keywords with inspect_keyword and to track the good ones with track_keywords.',
+  'For whether ChatGPT and Gemini recommend the user\'s apps (AI Visibility), start with list_ai_visibility_apps and pass its ids as ai_app_id.',
   'When a tool answers with done: false, tell the user in plain words what it says. Retry only an answer marked busy, once, after retry_after_seconds; any other refusal will not change on a retry.',
 ].join(' ');
 
@@ -1066,6 +1072,172 @@ export function createApplyraServer({ baseUrl, headers, version }: ApplyraServer
       annotations: READ_ONLY,
     },
     async () => jsonResponse(await callApi('/account/usage'))
+  );
+
+  // ── AI Visibility: what ChatGPT and Gemini answer about the user's apps. Read-only. ──
+
+  const AI_APP_ID = z
+    .string()
+    .uuid()
+    .describe('id from list_ai_visibility_apps');
+  /** The window every AI Visibility read takes. The API refuses an engine or market the app does not have, naming its own. */
+  const AI_SCOPE = {
+    days: z.number().int().min(1).max(365).optional().describe('Days in the window (default 7)'),
+    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Last day, YYYY-MM-DD (default today)'),
+    engine: z.enum(['chatgpt', 'gemini']).optional().describe('Default both'),
+    country: z.string().length(2).optional().describe('One market, ISO code (default all)'),
+  };
+  type AiScope = { days?: number; end?: string; engine?: string; country?: string };
+  const aiParams = (scope: AiScope, extra: Record<string, string | number | undefined> = {}) =>
+    buildParams(
+      Object.fromEntries(
+        Object.entries({ days: scope.days, end: scope.end, engine: scope.engine, country: scope.country, ...extra }).map(([k, v]) => [k, v === undefined ? undefined : String(v)])
+      )
+    );
+  const aiPath = (id: string, view: string) => `/ai-visibility/apps/${id}/${view}`;
+
+  registerTool(
+    'list_ai_visibility_apps',
+    {
+      title: 'List AI Visibility apps',
+      description:
+        'AI Visibility asks ChatGPT and Gemini the user\'s prompts (questions their users ask) every day in each market and records whether the answers name the user\'s app. Lists its apps: id (the ai_app_id of the other AI tools), engines, markets, prompts, competitors, latest answers date, store ids, applications (numeric ids for the keyword tools). meta.prompt_quota: active prompts vs plan limit. Read-only.',
+      annotations: READ_ONLY,
+    },
+    async () => jsonResponse(await callApi('/ai-visibility/apps'))
+  );
+
+  registerTool(
+    'get_ai_visibility',
+    {
+      title: 'Get AI visibility',
+      description:
+        'Is AI recommending the app, vs the previous window. summary: answers (refusals and prompts naming the app left out), visibility (% naming it), share_of_voice (% of all app mentions), position (average rank among the apps named, 1 = first), citation_rate (% citing its pages), change (points; negative position change = better). Also by_engine, by_market, leaderboard (the app and its competitors; followed_in: a competitor followed in those markets only, its rate still counting every market of the view), trend; latest_scan (prompts gained, lost, and new ones naming it, in the latest daily scan) without engine and country only. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        ...AI_SCOPE,
+        limit: z.number().int().min(1).max(50).optional().describe('Leaderboard rows (default 10)'),
+        granularity: z.enum(['day', 'week']).optional().describe('Default day up to 31 days'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, limit, granularity, ...scope }) =>
+      jsonResponse(await callApi(aiPath(ai_app_id, 'visibility'), { params: aiParams(scope, { limit, granularity }) }))
+  );
+
+  registerTool(
+    'list_ai_answers',
+    {
+      title: 'List AI answers',
+      description:
+        'The answers, newest first: id, date, engine, country, prompt_id (texts in `prompts`), named and rank (absent when the question names the app: see named_in_prompt), apps (the app and competitors named, in order), own_page_cited, store_page_cited, tone (toward the app, or `app`), search (web/memory), declined. E.g. where ChatGPT recommends a competitor and not the app: engine=chatgpt, app=<competitor>, outcome=missing. Full text: get_ai_answer. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        ...AI_SCOPE,
+        prompt_id: z.string().uuid().optional(),
+        category: z.enum(['situation', 'task', 'discovery', 'comparison', 'brand']).optional(),
+        q: z.string().max(200).optional().describe('Text in the prompt'),
+        app: z.string().optional().describe('Answers naming this app or competitor'),
+        domain: z.string().optional().describe('Answers citing this host'),
+        outcome: z.enum(['named', 'missing', 'cited']).optional().describe('Whether it names the app, or cites its pages'),
+        search_mode: z.enum(['web', 'memory']).optional().describe('ChatGPT only'),
+        tone: z.enum(['positive', 'neutral', 'negative']).optional(),
+        page: z.number().int().min(1).optional(),
+        per_page: z.number().int().min(1).max(50).optional().describe('Default 20'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, prompt_id, category, q, app, domain, outcome, search_mode, tone, page, per_page, ...scope }) =>
+      jsonResponse(
+        await callApi(aiPath(ai_app_id, 'answers'), { params: aiParams(scope, { prompt_id, category, q, app, domain, outcome, search_mode, tone, page, per_page }) })
+      )
+  );
+
+  registerTool(
+    'get_ai_answer',
+    {
+      title: 'Get an AI answer',
+      description:
+        'One answer in full: prompt, the engine\'s text, the tracked apps it named in order with the tone toward each, pages cited (url, type, passage used), web_searches, follow_ups. answer_id from list_ai_answers or get_ai_sentiment quotes. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        answer_id: z.number().int().positive(),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, answer_id }) => jsonResponse(await callApi(aiPath(ai_app_id, `answers/${answer_id}`)))
+  );
+
+  registerTool(
+    'get_ai_sentiment',
+    {
+      title: 'Get AI sentiment',
+      description:
+        'What the answers say about the app, or a competitor (`app`). summary and by_engine: net tone (-100 to 100, % positive minus % negative) with counts. apps: each tracked app\'s net tone and top drawbacks. drawbacks: what is held against it, with a quote. criticised, praised: excerpts. by_prompt: prompts treating it worst. when_asked_about_it: answers to direct questions about it. Prompt texts in `prompts`. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        ...AI_SCOPE,
+        app: z.string().optional().describe('A competitor, to read its tone instead'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, app, ...scope }) => jsonResponse(await callApi(aiPath(ai_app_id, 'sentiment'), { params: aiParams(scope, { app }) }))
+  );
+
+  registerTool(
+    'get_ai_citations',
+    {
+      title: 'Get AI citations',
+      description:
+        'The pages the answers cite. citation_rate: % of answers citing the app\'s pages (summary, by_engine). source_types: share of news, review, forum, social, competitor, own, store, other. apps: whose pages are cited. domains, pages: the most cited. store_pages: store listings cited. domain=<host>: that domain\'s pages. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        ...AI_SCOPE,
+        limit: z.number().int().min(1).max(50).optional().describe('Rows per list (default 15)'),
+        domain: z.string().optional().describe('e.g. nerdwallet.com'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, limit, domain, ...scope }) =>
+      jsonResponse(await callApi(aiPath(ai_app_id, 'citations'), { params: aiParams(scope, { limit, domain }) }))
+  );
+
+  registerTool(
+    'get_ai_opportunities',
+    {
+      title: 'Get AI opportunities',
+      description:
+        'Where the app can gain ground, vs the previous window. within_reach: prompts one engine names it on and another not (missing), or ranks it third or lower (rank), with who is named instead and pages to get on. won: prompts won since. pages_to_get_on: pages cited in answers leaving it out. keywords_chatgpt_searched: ChatGPT\'s searches as store keywords (times_searched); to track one, track_keywords takes its application_id (as app_id), store, country, lang. named_instead: tracked competitors. Prompt texts in `prompts`. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        ...AI_SCOPE,
+        limit: z.number().int().min(1).max(50).optional().describe('Rows per list (default 10)'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, limit, ...scope }) => jsonResponse(await callApi(aiPath(ai_app_id, 'opportunities'), { params: aiParams(scope, { limit }) }))
+  );
+
+  registerTool(
+    'list_ai_prompts',
+    {
+      title: 'List AI prompts',
+      description:
+        'The app\'s prompts, each asked to ChatGPT and Gemini daily in one market: id, text, country, lang, category, status (active, paused, paused_by_plan), and over the window answers, visibility (% naming the app), latest outcome per engine. Managed in the Applyra dashboard only. Read-only.',
+      inputSchema: {
+        ai_app_id: AI_APP_ID,
+        ...AI_SCOPE,
+        status: z.enum(['active', 'paused']).optional(),
+        category: z.enum(['situation', 'task', 'discovery', 'comparison', 'brand']).optional(),
+        q: z.string().max(200).optional().describe('Text in the prompt'),
+        outcome: z.enum(['named', 'missing']).optional().describe('Named in at least one answer of the window, or in none'),
+        page: z.number().int().min(1).optional(),
+        per_page: z.number().int().min(1).max(200).optional().describe('Default 50'),
+      },
+      annotations: READ_ONLY,
+    },
+    async ({ ai_app_id, status, category, q, outcome, page, per_page, ...scope }) =>
+      jsonResponse(await callApi(aiPath(ai_app_id, 'prompts'), { params: aiParams(scope, { status, category, q, outcome, page, per_page }) }))
   );
 
   return server;

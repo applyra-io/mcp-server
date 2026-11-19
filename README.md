@@ -6,13 +6,13 @@
 
 MCP (Model Context Protocol) server for [Applyra](https://www.applyra.io). It connects your App Store and Google Play keyword data to AI assistants like ChatGPT, Claude, Cursor, Codex, VS Code Copilot, and more.
 
-30 tools covering keyword rank tracking, difficulty and traffic scoring, listing audits and metadata simulation, competitor visibility, notes on your charts and what followed each one, autocomplete mining, niche clustering, and top charts, on the App Store and Google Play.
+38 tools covering keyword rank tracking, difficulty and traffic scoring, listing audits and metadata simulation, competitor visibility, notes on your charts and what followed each one, autocomplete mining, niche clustering and top charts, on the App Store and Google Play, plus AI Visibility: whether ChatGPT and Gemini recommend your app.
 
 ## Remote server (ChatGPT, Claude, Gemini CLI, VS Code, Cursor)
 
 The same tools are hosted at `https://www.applyra.io/api/mcp` (Streamable HTTP, OAuth). Nothing to install and no API key: the client opens an Applyra sign-in page, you approve it, and it is connected. It requires an Applyra account with the **Unlimited plan**.
 
-- **ChatGPT**: on chatgpt.com, Plugins > Add > Create custom MCP server, with this URL and OAuth authentication, then Create as a plugin. Read and write tools both work on a ChatGPT Plus plan.
+- **ChatGPT**: install it from the [ChatGPT plugin directory](https://chatgpt.com/plugins/plugin_asdk_app_6ac610197a3c81918467050d9bf9d0cd) (or search for Applyra in Plugins), or add it by hand: Plugins > Add > Create custom MCP server, with this URL and OAuth authentication, then Create as a plugin.
 - **Claude**: add it from the [Claude directory](https://claude.ai/directory/applyra) in one click (on the web, desktop, mobile and in Claude Code), or as a custom connector with this URL (Customize > Connectors > Add custom connector).
 - **Gemini CLI**: `gemini extensions install https://github.com/applyra-io/mcp-server`, then sign in when Gemini CLI asks.
 - **VS Code, Cursor, Perplexity, Smithery** and any client that supports remote MCP servers with OAuth: add this URL as a remote (HTTP) server.
@@ -150,6 +150,16 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 | `add_competitor` | Add a competitor app to one of your applications by its store bundle ID |
 | `remove_competitor` | Remove a competitor relationship by its internal ID |
 | `get_account_usage` | Current usage vs. plan limits |
+| `list_ai_visibility_apps` | Your apps on AI Visibility, with the id the other AI Visibility tools take, their engines, markets, prompts and applications |
+| `get_ai_visibility` | How often ChatGPT and Gemini name the app (visibility, share of voice, position, citation rate) against the previous window, per engine and market, with its competitors ranked beside it and the trend |
+| `list_ai_answers` | The answers, newest first, filtered by engine, market, prompt, outcome, tone, competitor or cited site |
+| `get_ai_answer` | One answer in full: text, apps named with their tone, pages cited, web searches |
+| `get_ai_sentiment` | What the answers say about the app or a competitor: net tone, drawbacks with quotes, excerpts |
+| `get_ai_citations` | The pages the answers cite: domains, pages, kinds of source and store listings |
+| `get_ai_opportunities` | Prompts within reach, pages to get on, and the keywords ChatGPT searched, ready for `track_keywords` |
+| `list_ai_prompts` | The app's prompts, with how their answers treat the app over the window |
+
+The eight AI Visibility tools are read-only and need the AI Visibility option on the Applyra account.
 
 ## Learn more
 

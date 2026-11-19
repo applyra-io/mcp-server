@@ -84,6 +84,21 @@ App Store Connect or Google Play: the user ships changes themselves.
 `list_top_chart_categories`, then `top_charts` for a store, country, category and collection (free,
 paid or grossing), with each app's movement since the day before.
 
+## Recommended by ChatGPT and Gemini
+
+With the AI Visibility option, Applyra asks ChatGPT and Gemini the user's prompts every day in each
+market and records whether the answers name the app. These tools only read; an account without the
+option gets `done: false`.
+
+1. `list_ai_visibility_apps` first: its `id` (a UUID) is the `ai_app_id` the other AI Visibility
+   tools take, not the numeric `id` of `list_applications`.
+2. `get_ai_visibility` for how often each engine names the app against the previous window, and
+   how its competitors compare. `list_ai_answers` with `app` set to a competitor and
+   `outcome=missing` returns the answers that recommend it and leave the app out.
+3. `get_ai_opportunities` lists the keywords ChatGPT searched the web for. Each carries the
+   `application_id` (pass it as `app_id`), `store`, `country` and `lang` that `track_keywords` takes:
+   offer to track the untracked ones, and ask before doing it.
+
 ## Reading the numbers
 
 - **Difficulty** (0-100): how hard it is to reach the top results for a keyword.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "applyra",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "App Store and Google Play keyword rankings, keyword difficulty and traffic, competitors, ASO Health audits and listing simulation from your Applyra account, with a skill that knows how to use them.",
   "author": {
     "name": "Applyra",
@@ -17,7 +17,7 @@
       "interface": {
         "displayName": "Applyra",
         "shortDescription": "App Store and Google Play ASO",
-        "longDescription": "Applyra tracks how your apps rank on the App Store and Google Play every day. This plugin brings that data into the conversation, so the assistant answers from your own account instead of from memory.\n\nAsk which keywords moved this month, and it reads your positions, the apps just ahead and behind you, and the rank history of each keyword. Ask whether a keyword is worth targeting, and it inspects its difficulty and traffic scores, its KEI and the apps ranking for it. Draft a new title, subtitle, short description or iOS keywords field, and Applyra checks it against each store's rules, then scores it on the same engine that audits live listings, so you see the gain or loss before you ship.\n\nIt also reads the ASO Health audit of a listing and the visibility score history of an app, compares your app with its competitors, runs store autocomplete and niche analyses, and reads the top charts of both stores. When you ask for it, it tracks or untracks keywords and competitors in your Applyra account.\n\nBuilt for indie developers, solo founders and small studios who publish their own apps.\n\nYour listings stay in your hands: Applyra reads and scores, and you publish the changes yourself in App Store Connect or the Google Play Console. You sign in with an Applyra account that includes API access.",
+        "longDescription": "Applyra tracks how your apps rank on the App Store and Google Play every day. This plugin brings that data into the conversation, so the assistant answers from your own account instead of from memory.\n\nAsk which keywords moved this month, and it reads your positions, the apps just ahead and behind you, and the rank history of each keyword. Ask whether a keyword is worth targeting, and it inspects its difficulty and traffic scores, its KEI and the apps ranking for it. Draft a new title, subtitle, short description or iOS keywords field, and Applyra checks it against each store's rules, then scores it on the same engine that audits live listings, so you see the gain or loss before you ship.\n\nIt also reads the ASO Health audit of a listing and the visibility score history of an app, compares your app with its competitors, runs store autocomplete and niche analyses, and reads the top charts of both stores. Tell it what you changed on a given day, a new title or a campaign, and it notes it on your charts, then compares your visibility and ranks before and after. When you ask for it, it tracks or untracks keywords and competitors in your Applyra account.\n\nBuilt for indie developers, solo founders and small studios who publish their own apps.\n\nYour listings stay in your hands: Applyra reads and scores, and you publish the changes yourself in App Store Connect or the Google Play Console. You sign in with an Applyra account that includes API access.",
         "developerName": "Krnel Studio",
         "category": "Data & Analytics",
         "capabilities": [
@@ -28,6 +28,7 @@
           "Compare an app with its competitors",
           "Run store autocomplete and niche analyses",
           "Read App Store and Google Play top charts",
+          "Note a change and compare before and after",
           "Track keywords and competitors"
         ],
         "websiteURL": "https://www.applyra.io",
